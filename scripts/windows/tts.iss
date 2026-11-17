@@ -10,6 +10,10 @@ ChangesEnvironment=yes
 OutputDir=..\..\dist
 OutputBaseFilename=tts-{#AppVersion}-windows-amd64-setup
 WizardStyle=modern
+UsePreviousTasks=no
+
+[Tasks]
+Name: "gcloud"; Description: "Install Google Cloud CLI (requires internet access)"; Flags: unchecked; Check: NeedsGoogleCloudCLI
 
 [Files]
 Source: "{#BinaryDir}\tts.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -18,13 +22,48 @@ Source: "{#BinaryDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 [Code]
 const
   PathOwnerKey = 'Software\smkod\tts-cli';
+  GoogleInstallerName = 'GoogleCloudSDKInstaller.exe';
+  GoogleInstallerURL = 'https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe';
 
-procedure CurStepChanged(CurStep: TSetupStep);
+function NeedsGoogleCloudCLI: Boolean;
+begin
+  Result := (FileSearch('gcloud.cmd', GetEnv('PATH')) = '') and
+    (FileSearch('gcloud.exe', GetEnv('PATH')) = '');
+end;
+
+procedure InstallGoogleCloudCLI;
+var
+  ExitCode: Integer;
+  Installer, VerifyArgs: String;
+begin
+  try
+    DownloadTemporaryFile(GoogleInstallerURL, GoogleInstallerName, '', nil);
+    Installer := ExpandConstant('{tmp}\' + GoogleInstallerName);
+    VerifyArgs := '-NoProfile -NonInteractive -Command "' +
+      '$s = Get-AuthenticodeSignature -LiteralPath ''.\' + GoogleInstallerName + '''' +
+      '; if ($s.Status -ne ''Valid'' -or $s.SignerCertificate.GetNameInfo(''SimpleName'', $false) ' +
+      '-ne ''Google LLC'') { exit 1 }; exit 0"';
+    if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+        VerifyArgs, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) or
+        (ExitCode <> 0) then
+      RaiseException('Could not verify the Google Cloud CLI installer signature.');
+    if not Exec(Installer, '/S /singleuser /noreporting', '', SW_SHOWNORMAL,
+        ewWaitUntilTerminated, ExitCode) then
+      RaiseException('Could not start the Google Cloud CLI installer.');
+    if ExitCode <> 0 then
+      RaiseException(Format('Google Cloud CLI installer exited with code %d.', [ExitCode]));
+  except
+    Log(GetExceptionMessage);
+    SuppressibleMsgBox(GetExceptionMessage +
+      #13#10 + 'tts is installed. You can install Google Cloud CLI separately.',
+      mbError, MB_OK, IDOK);
+  end;
+end;
+
+procedure AddToUserPath;
 var
   UserPath, AppDir, OwnedDir: String;
 begin
-  if CurStep <> ssPostInstall then
-    Exit;
   AppDir := ExpandConstant('{app}');
   if not RegQueryStringValue(HKCU, 'Environment', 'Path', UserPath) then
     UserPath := '';
@@ -44,6 +83,15 @@ begin
     RegDeleteValue(HKCU, PathOwnerKey, 'PathEntry');
     RaiseException('Could not update the user PATH.');
   end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  AddToUserPath;
+  if WizardIsTaskSelected('gcloud') and NeedsGoogleCloudCLI then
+    InstallGoogleCloudCLI;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

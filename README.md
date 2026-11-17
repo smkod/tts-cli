@@ -8,7 +8,10 @@ output. It does not depend on Anki.
 
 Download the package for your platform from [GitHub Releases](https://github.com/smkod/tts-cli/releases).
 On Windows x64, run the setup executable and open a new terminal so it picks
-up the updated user PATH. On macOS or Linux, extract the matching archive,
+up the updated user PATH. If Google Cloud CLI is not already on your PATH, you
+can select the optional task to download and install it for your user. This
+requires internet access and does not sign you in. Uninstalling `tts` does not
+remove Google Cloud CLI. On macOS or Linux, extract the matching archive,
 run `chmod +x tts` if needed, and place `tts` in a directory on your PATH.
 Prebuilt packages do not require Go. Compare the download's SHA-256 hash with
 `SHA256SUMS.txt` in the release assets.
