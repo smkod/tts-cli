@@ -79,7 +79,7 @@ jobs:
             $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
             "$hash  $($_.Name)"
           } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: tts-release
           path: |
@@ -95,7 +95,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: tts-release
           path: dist
