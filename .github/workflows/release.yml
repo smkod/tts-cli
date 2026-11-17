@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Package binaries and Windows installer
+        shell: pwsh
+        run: |
+          $version = '0.0.0-preview'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$') {
+              throw "Expected a version tag such as v0.1.0 or v0.1.0-rc.1."
+            }
+            $version = $env:GITHUB_REF_NAME.Substring(1)
+          }
+          New-Item -ItemType Directory -Path dist, dist/staging | Out-Null
+          $env:CGO_ENABLED = '0'
+          foreach ($os in 'windows', 'darwin', 'linux') {
+            foreach ($arch in 'amd64', 'arm64') {
+              if ($os -eq 'windows' -and $arch -ne 'amd64') { continue }
+              $env:GOOS = $os
+              $env:GOARCH = $arch
+              $name = "tts-$version-$os-$arch"
+              $stage = "dist/staging/$name"
+              New-Item -ItemType Directory -Path $stage | Out-Null
+              $binary = if ($os -eq 'windows') { 'tts.exe' } else { 'tts' }
+              go build -trimpath -o "$stage/$binary" ./cmd/tts
+              if ($LASTEXITCODE -ne 0) { throw "Build failed for $os/$arch." }
+              Copy-Item README.md $stage
+              if ($os -eq 'windows') {
+                $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+                $source = (Resolve-Path $stage).Path
+                & $compiler "/DAppVersion=$version" "/DBinaryDir=$source" scripts/windows/tts.iss
+                if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed.' }
+              } else {
+                tar -czf "dist/$name.tar.gz" -C $stage $binary README.md
+                if ($LASTEXITCODE -ne 0) { throw "Archive failed for $os/$arch." }
+              }
+            }
+          }
+      - name: Smoke-test Windows installation
+        shell: pwsh
+        run: |
+          $setup = Get-Item dist/*-setup.exe
+          $target = Join-Path $env:RUNNER_TEMP 'tts-smoke'
+          $install = Start-Process -FilePath $setup.FullName -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"$target`"" -WindowStyle Hidden -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)." }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if ($target -notin $userPath) { throw 'Installer did not update the user PATH.' }
+          & "$target/tts.exe" generate --dry-run 'Hello world'
+          if ($LASTEXITCODE -ne 0) { throw 'Installed CLI failed its offline smoke test.' }
+          $uninstaller = Get-Item "$target/unins*.exe"
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)." }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
+          if (($target -in $userPath) -or (Test-Path "$target/tts.exe")) {
+            throw 'Uninstaller did not clean up.'
+          }
+      - name: Generate checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tts-release
+          path: |
+            dist/*-setup.exe
+            dist/*.tar.gz
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tts-release
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          args=(--verify-tag --generate-notes)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" "${args[@]}" dist/*
