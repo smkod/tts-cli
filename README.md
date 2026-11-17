@@ -23,14 +23,19 @@ directory on your PATH.
 
 ### Configure Google Cloud access
 
-Make sure your Google Cloud project has billing and the
-Text-to-Speech API enabled. For local development with the Google Cloud CLI:
+Make sure your Google Cloud project has billing and the Text-to-Speech API
+enabled. With Google Cloud CLI on your PATH, run:
 
 ```sh
-gcloud auth application-default login
-gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+tts login google --project YOUR_PROJECT_ID
 tts doctor --online --json
 ```
+
+The login command opens Google's sign-in flow through
+`gcloud auth application-default login`. With `--project`, it also sets the
+ADC quota project after sign-in. This updates local ADC, which can be shared
+with other tools. If `GOOGLE_APPLICATION_CREDENTIALS` points to a credentials
+file, it takes precedence over those local credentials.
 
 See [Cloud TTS authentication](https://docs.cloud.google.com/text-to-speech/docs/authentication).
 On Google Cloud, use Application Default Credentials (ADC) with an attached
@@ -52,6 +57,7 @@ tts "Hello, how are you?" -o hello.mp3
 | `tts batch <file>` | `tts b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates MP3s, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
 | `tts voices list` | `tts v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
 | `tts providers list` | `tts p ls` | Lists implemented providers. Currently only `google` is available. |
+| `tts login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
 | `tts capabilities` | `tts cap` | Summarizes supported formats and limits. Use `--json` for details such as locales and supported parameters. |
 | `tts config show` | `tts cfg sh` | Shows the config path and effective settings. With `--json`, it also shows saved YAML values separately. |
 | `tts config set <key=value>...` | `tts cfg s <key=value>...` | Validates and saves one or more settings together, for example `tts config set language=it-IT voice=kore`. |
@@ -158,6 +164,7 @@ top-level error. Doctor failures can include both check details and an error.
 | `batch` | `items` (input order), `total`, `succeeded`, `failed`, optional `dry_run`; each item has `id`, `success` and either generation `data` or `error` |
 | `voices list` | `source` (`local` or `google`), `voices` (`name`, `language`, `alias`), and `catalog_date` for the snapshot |
 | `providers list` | `providers` (provider IDs) |
+| `login google` | `provider` (Google provider ID), `quota_project` (explicit project ID, or empty if omitted) |
 | `capabilities` | `providers`, `default_provider`, `voice_family`, `languages`, `voices_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `batch`, `cache`, `dry_run` |
 | `config show/set/unset` | `file`, `stored` (saved strings), `effective` (resolved settings) |
 | `doctor` | `checks` (`check`, `status`, `message`), `online` |
