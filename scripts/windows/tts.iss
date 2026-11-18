@@ -54,8 +54,8 @@ begin
       RaiseException(Format('Google Cloud CLI installer exited with code %d.', [ExitCode]));
   except
     Log(GetExceptionMessage);
-    SuppressibleMsgBox(GetExceptionMessage +
-      #13#10 + 'tts is installed. You can install Google Cloud CLI separately.',
+    SuppressibleMsgBox(GetExceptionMessage + #13#10 +
+      'tts is installed. You can install Google Cloud CLI separately.',
       mbError, MB_OK, IDOK);
   end;
 end;
