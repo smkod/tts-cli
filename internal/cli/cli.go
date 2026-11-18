@@ -164,7 +164,7 @@ func (a *app) root() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit versioned JSON")
 	root.PersistentFlags().StringVar(&a.configFlag, "config", "", "Select a YAML configuration file")
-	root.AddCommand(a.generate(), a.batch(), a.voices(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login())
+	root.AddCommand(a.generate(), a.batch(), a.voices(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login(), a.agentGuide())
 	return root
 }
 

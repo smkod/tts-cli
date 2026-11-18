@@ -78,6 +78,7 @@ ttsi "Hello, how are you?" -o hello.mp3
 | `ttsi voices list` | `ttsi v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
 | `ttsi providers list` | `ttsi p ls` | Lists implemented providers. Currently only `google` is available. |
 | `ttsi login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
+| `ttsi agent-guide` | — | Prints bundled instructions for AI agents without network or credentials. Add `--json` for structured output. |
 | `ttsi capabilities` | `ttsi cap` | Summarizes supported formats and limits. Use `--json` for details such as locales and supported parameters. |
 | `ttsi config show` | `ttsi cfg sh` | Shows the config path and effective settings. With `--json`, it also shows saved YAML values separately. |
 | `ttsi config set <key=value>...` | `ttsi cfg s <key=value>...` | Validates and saves one or more settings together, for example `ttsi config set language=it-IT voice=kore`. |
@@ -199,6 +200,7 @@ top-level error. Doctor failures can include both check details and an error.
 | `voices list` | `source` (`local` or `google`), `voices` (`name`, `language`, `alias`), and `catalog_date` for the snapshot |
 | `providers list` | `providers` (provider IDs) |
 | `login google` | `provider` (Google provider ID), `quota_project` (explicit project ID, or empty if omitted) |
+| `agent-guide` | `guide_version`, `format` (`markdown`), `instructions` (bundled usage guide) |
 | `capabilities` | `providers`, `default_provider`, `voice_family`, `languages`, `voices_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `default_output_format`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `batch`, `cache`, `dry_run` |
 | `config show/set/unset` | `file`, `stored` (saved strings), `effective` (resolved settings) |
 | `doctor` | `checks` (`check`, `status`, `message`), `online` |
@@ -219,6 +221,9 @@ for branching. A change to an existing field's meaning or shape requires a
 new schema version.
 
 ## Agents and development
+
+Run `ttsi agent-guide` to obtain self-contained usage instructions directly from
+the executable, or `ttsi agent-guide --json` to read them in `data.instructions`.
 
 See [the agent skill](skills/tts-cli/SKILL.md) for CLI automation and optional
 AnkiConnect interoperability. Anki, a GUI, and additional TTS providers are
