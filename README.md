@@ -23,8 +23,22 @@ directory on your PATH.
 
 ### Configure Google Cloud access
 
-Make sure your Google Cloud project has billing and the Text-to-Speech API
-enabled. With Google Cloud CLI on your PATH, run:
+1. Open the [Google Cloud Console](https://console.cloud.google.com/). Use the
+   project selector at the top to select an existing project or choose **New
+   Project**, enter a name, and click **Create**. Select the new project before
+   continuing.
+2. Open **Billing** and make sure the selected project is linked to an active
+   billing account. Link one if needed; Cloud Text-to-Speech requires billing.
+3. In the same project, open the [Cloud Text-to-Speech API page](https://console.cloud.google.com/apis/library/texttospeech.googleapis.com)
+   and click **Enable**. See [Google's setup guide](https://docs.cloud.google.com/text-to-speech/docs/get-started)
+   for details.
+4. Open the console's [Welcome page](https://console.cloud.google.com/welcome)
+   with your project selected and copy the **Project ID** shown near the Welcome
+   heading. Use the ID (for example, `my-tts-project-123`), not the display name
+   or numeric project number. See [Google's guide to finding project identifiers](https://docs.cloud.google.com/resource-manager/docs/view-update-projects#find_the_project_name_number_and_id).
+
+With [Google Cloud CLI](https://docs.cloud.google.com/sdk/docs/install) on your
+PATH, replace `YOUR_PROJECT_ID` with the ID you copied and run:
 
 ```sh
 ttsi login google --project YOUR_PROJECT_ID
@@ -33,7 +47,13 @@ ttsi doctor --online --json
 
 The login command opens Google's sign-in flow through
 `gcloud auth application-default login`. With `--project`, it also sets the
-ADC quota project after sign-in. This updates local ADC, which can be shared
+ADC quota project after sign-in. That project provides quota and is billed for
+API usage. Sign in with an account that has `serviceusage.services.use` on the
+project. If setting the quota project fails because this permission is missing,
+ask a project administrator for the **Service Usage Consumer** role
+(`roles/serviceusage.serviceUsageConsumer`) on that project.
+
+This updates local ADC, which can be shared
 with other tools. If `GOOGLE_APPLICATION_CREDENTIALS` points to a credentials
 file, it takes precedence over those local credentials.
 
