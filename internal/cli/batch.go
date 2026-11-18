@@ -74,7 +74,12 @@ func decodeItem(raw json.RawMessage) (string, batchItem, bool) {
 	for k, value := range fields {
 		switch k {
 		case "id", "text":
-		case "language", "voice":
+		case "bitrate":
+			var n int
+			err := json.Unmarshal(value, &n)
+			item.Settings[k] = fmt.Sprint(n)
+			valid = valid && err == nil
+		case "language", "voice", "format":
 			v, ok := jsonText(value)
 			item.Settings[k] = v
 			valid = valid && ok
@@ -110,7 +115,7 @@ func loadBatch(path string) ([]json.RawMessage, error) {
 
 func (a *app) batch() *cobra.Command {
 	f := &synthFlags{}
-	cmd := command("batch <file>", "Generate MP3 files from a JSON manifest", []string{"b"}, exactly(1), func(cmd *cobra.Command, args []string) error {
+	cmd := command("batch <file>", "Generate audio files from a JSON manifest", []string{"b"}, exactly(1), func(cmd *cobra.Command, args []string) error {
 		a.alwaysJSON = true
 		items, e := loadBatch(args[0])
 		if e != nil {
@@ -126,7 +131,7 @@ func (a *app) batch() *cobra.Command {
 		for k, v := range flags {
 			common[k] = v
 		}
-		common["language"], common["voice"] = "en-US", "kore"
+		common["language"], common["voice"] = "en-US", "random"
 		settings, e := config.Resolve(common, nil)
 		if e != nil {
 			return e
@@ -141,7 +146,7 @@ func (a *app) batch() *cobra.Command {
 			report.Items[i].ID = id
 			ids[id]++
 			if !ok {
-				report.Items[i].Error = core.Fail("INVALID_ITEM", "Expected a nonempty string ID, text, and optional language and voice strings.", false)
+				report.Items[i].Error = core.Fail("INVALID_ITEM", "Expected a nonempty string ID, text, and optional language, voice, and format strings.", false)
 			}
 		}
 		eng := &core.Engine{Provider: a.backend, Warn: a.warn}

@@ -26,6 +26,9 @@ func (m *mockBackend) Synthesize(_ context.Context, r core.Request) ([]byte, err
 	if r.Text == "private rejection" {
 		return nil, core.Fail("PROVIDER_REJECTED", "Google rejected the request.", false)
 	}
+	if r.Format == core.FormatWAV {
+		return []byte("RIFF\x26\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00"), nil
+	}
 	b := make([]byte, 417)
 	copy(b, []byte{0xff, 0xfb, 0x90, 0x00})
 	return b, nil
@@ -71,7 +74,7 @@ func TestCommandAliases(t *testing.T) {
 		name        string
 		long, short string
 	}{
-		{"generate", "generate Hello --dry-run", "g Hello --dry-run"},
+		{"generate", "generate Hello --voice kore --dry-run", "g Hello --voice kore --dry-run"},
 		{"voices", "voices list --lang it-IT", "v ls --lang it-IT"},
 		{"providers", "providers list", "p ls"},
 		{"capabilities", "capabilities", "cap"},
@@ -88,6 +91,38 @@ func TestCommandAliases(t *testing.T) {
 	}
 	if len(m.requests) > 0 || m.lists > 0 {
 		t.Fatal("an offline command called the backend")
+	}
+}
+
+func TestGenerateOutputFormat(t *testing.T) {
+	workspace(t)
+	m := &mockBackend{}
+	for _, tc := range []struct {
+		name       string
+		args       []string
+		wantFormat string
+	}{
+		{"default MP3", nil, "mp3"},
+		{"explicit WAV", []string{"--format", "wav"}, "wav"},
+		{"mismatched extension", []string{"-o", "wrong.wav"}, ""},
+		{"invalid format", []string{"--format", "flac"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, diag := runTest(m, append([]string{"hello", "--json"}, tc.args...)...)
+			if tc.wantFormat == "" {
+				if code == 0 {
+					t.Fatalf("expected a format error: %s", out)
+				}
+				return
+			}
+			if code != 0 || !strings.Contains(out, `"format":"`+tc.wantFormat+`"`) ||
+				!strings.Contains(out, "."+tc.wantFormat+`"`) {
+				t.Fatalf("unexpected format: code %d, output %s, diagnostics %s", code, out, diag)
+			}
+		})
+	}
+	if len(m.requests) != 2 || m.requests[0].Format != core.FormatMP3 || m.requests[1].Format != core.FormatWAV {
+		t.Fatalf("expected distinct synthesis requests for each format, got %v", m.requests)
 	}
 }
 func TestGenerateRoutingAndJSONFailures(t *testing.T) {
@@ -124,6 +159,51 @@ func TestGenerateRoutingAndJSONFailures(t *testing.T) {
 		})
 	}
 }
+func TestGenerateVoiceSelection(t *testing.T) {
+	workspace(t)
+	for _, tc := range []struct {
+		name  string
+		args  []string
+		lang  string
+		voice string
+	}{
+		{"default locale", nil, "en-US", ""},
+		{"requested locale", []string{"--lang", "IT-it"}, "it-IT", ""},
+		{"explicit voice", []string{"--lang", "it-IT", "--voice", "kore"}, "it-IT", "it-IT-Chirp3-HD-Kore"},
+		{"unknown locale", []string{"--lang", "xx-XX"}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockBackend{}
+			code, out, _ := runTest(m, append([]string{"generate", "Hello", "--dry-run", "--json"}, tc.args...)...)
+			var result struct {
+				Data  core.Generation
+				Error *core.Problem
+			}
+			if err := json.Unmarshal([]byte(out), &result); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			if len(m.requests) != 0 || m.lists != 0 {
+				t.Fatal("dry run contacted the provider")
+			}
+			if tc.lang == "" {
+				if code != 2 || result.Error == nil || result.Error.Code != "INVALID_VOICE" {
+					t.Fatalf("unexpected error: %d %s", code, out)
+				}
+				return
+			}
+			if code != 0 || result.Data.Language != tc.lang || (tc.voice != "" && result.Data.Voice != tc.voice) {
+				t.Fatalf("unexpected voice selection: %d %s", code, out)
+			}
+			for _, voice := range core.LocalVoices(tc.lang) {
+				if voice.Name == result.Data.Voice {
+					return
+				}
+			}
+			t.Fatalf("voice is not in the catalog for %s: %s", tc.lang, out)
+		})
+	}
+}
+
 func TestJSONConfigEditAndOnlineDiscovery(t *testing.T) {
 	workspace(t)
 	m := &mockBackend{}
@@ -160,7 +240,7 @@ func TestBatchPartialFailureAndCache(t *testing.T) {
 		}
 		return env.Data
 	}
-	code, out, diag := runTest(m, "b", manifestPath)
+	code, out, diag := runTest(m, "b", manifestPath, "--voice", "kore")
 	r := parse(out)
 	if code != 3 || r.Total != 6 || r.Succeeded != 2 || r.Failed != 4 || !strings.Contains(diag, "2 succeeded") || len(m.requests) != 3 {
 		t.Fatalf("first batch: %d %s %s (%d requests)", code, out, diag, len(m.requests))
@@ -171,7 +251,7 @@ func TestBatchPartialFailureAndCache(t *testing.T) {
 	if !filepath.IsAbs(r.Items[0].Data.File) || r.Items[4].Error.Code != "DUPLICATE_ID" || r.Items[5].Error.Code != "DUPLICATE_ID" {
 		t.Fatalf("wrong file or ID handling: %s", out)
 	}
-	code, out, diag = runTest(m, "batch", manifestPath, "--json")
+	code, out, diag = runTest(m, "batch", manifestPath, "--voice", "kore", "--json")
 	r = parse(out)
 	if code != 3 || !r.Items[0].Data.Cached || !r.Items[2].Data.Cached || diag != "" || len(m.requests) != 4 {
 		t.Fatalf("repeat batch: %d %s %q", code, out, diag)
