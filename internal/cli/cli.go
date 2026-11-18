@@ -51,7 +51,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, backend c
 	if err != nil {
 		p = core.Public(err)
 		if p.Code == "INTERNAL" {
-			p = core.Fail("INVALID_USAGE", "Invalid command, arguments or flags. See tts --help.", false)
+			p = core.Fail("INVALID_USAGE", "Invalid command, arguments or flags. See ttsi --help.", false)
 		}
 		if a.code == 0 {
 			a.code = exitFor(p)
@@ -59,7 +59,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, backend c
 	}
 	if a.json || a.alwaysJSON || (err != nil && earlyJSON) {
 		if encodeErr := json.NewEncoder(stdout).Encode(response{1, err == nil && a.code == 0, a.result, p}); encodeErr != nil {
-			fmt.Fprintln(stderr, "tts: Cannot write JSON output.")
+			fmt.Fprintln(stderr, "ttsi: Cannot write JSON output.")
 			return 1
 		}
 	} else if a.human != "" {
@@ -90,7 +90,7 @@ func exitFor(p *core.Problem) int {
 func (a *app) warn(msg string) {
 	a.errMu.Lock()
 	defer a.errMu.Unlock()
-	fmt.Fprintln(a.stderr, "tts: "+msg)
+	fmt.Fprintln(a.stderr, "ttsi: "+msg)
 }
 
 func wantsJSON(args []string) bool {
@@ -158,9 +158,9 @@ func requiresArgs(_ *cobra.Command, args []string) error {
 }
 
 func (a *app) root() *cobra.Command {
-	root := &cobra.Command{Use: "tts", Short: "Generate Chirp 3 HD speech for people and scripts.",
+	root := &cobra.Command{Use: "ttsi", Short: "Generate Chirp 3 HD speech for people and scripts.",
 		SilenceUsage: true, SilenceErrors: true, DisableSuggestions: true,
-		Example: "  tts \"Hello there\"\n  tts g \"Come stai?\" --lang it-IT --json\n  tts cfg s language=it-IT voice=kore",
+		Example: "  ttsi \"Hello there\"\n  ttsi g \"Come stai?\" --lang it-IT --json\n  ttsi cfg s language=it-IT voice=kore",
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit versioned JSON")
 	root.PersistentFlags().StringVar(&a.configFlag, "config", "", "Select a YAML configuration file")
@@ -298,13 +298,13 @@ func (a *app) capabilities() *cobra.Command {
 	return command("capabilities", "Show supported operations and limits", []string{"cap"}, exactly(0), func(_ *cobra.Command, _ []string) error {
 		a.result = map[string]any{
 			"providers": providerIDs, "default_provider": "google", "voice_family": "Chirp3-HD", "languages": core.Languages(),
-			"voices_command": "tts voices list --json", "catalog_source": "local", "catalog_date": core.CatalogDate,
+			"voices_command": "ttsi voices list --json", "catalog_source": "local", "catalog_date": core.CatalogDate,
 			"input_formats": []string{"text"}, "output_formats": []string{"mp3"}, "max_text_bytes": core.MaxTextBytes,
 			"synthesis_parameters":   []string{"provider", "language", "voice"},
 			"unsupported_parameters": []string{"ssml", "speaking_rate", "pitch", "custom_pronunciation", "pause_control"},
 			"batch":                  true, "cache": true, "dry_run": true,
 		}
-		a.human = "Google Chirp 3 HD · plain text to MP3 · 5,000 UTF-8 bytes per item\nUse tts voices list to discover languages and voices."
+		a.human = "Google Chirp 3 HD · plain text to MP3 · 5,000 UTF-8 bytes per item\nUse ttsi voices list to discover languages and voices."
 		return nil
 	})
 }

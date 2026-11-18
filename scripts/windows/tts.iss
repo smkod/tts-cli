@@ -8,15 +8,15 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ChangesEnvironment=yes
 OutputDir=..\..\dist
-OutputBaseFilename=tts-{#AppVersion}-windows-amd64-setup
+OutputBaseFilename=ttsi-{#AppVersion}-windows-amd64-setup
 WizardStyle=modern
 UsePreviousTasks=no
 
 [Tasks]
-Name: "gcloud"; Description: "Install Google Cloud CLI (requires internet access)"; Flags: unchecked; Check: NeedsGoogleCloudCLI
+Name: "gcloud"; Description: "Install Google Cloud CLI (may take a while; requires internet access)"; Flags: unchecked; Check: NeedsGoogleCloudCLI
 
 [Files]
-Source: "{#BinaryDir}\tts.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\ttsi.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Code]
@@ -37,6 +37,7 @@ var
   Installer, VerifyArgs: String;
 begin
   try
+    WizardForm.StatusLabel.Caption := 'Downloading Google Cloud CLI. This may take a while.';
     DownloadTemporaryFile(GoogleInstallerURL, GoogleInstallerName, '', nil);
     Installer := ExpandConstant('{tmp}\' + GoogleInstallerName);
     VerifyArgs := '-NoProfile -NonInteractive -Command "' +
@@ -47,6 +48,7 @@ begin
         VerifyArgs, ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) or
         (ExitCode <> 0) then
       RaiseException('Could not verify the Google Cloud CLI installer signature.');
+    WizardForm.StatusLabel.Caption := 'Installing Google Cloud CLI. This may take a while.';
     if not Exec(Installer, '/S /singleuser /noreporting', '', SW_SHOWNORMAL,
         ewWaitUntilTerminated, ExitCode) then
       RaiseException('Could not start the Google Cloud CLI installer.');
@@ -55,7 +57,7 @@ begin
   except
     Log(GetExceptionMessage);
     SuppressibleMsgBox(GetExceptionMessage + #13#10 +
-      'tts is installed. You can install Google Cloud CLI separately.',
+      'ttsi is installed. You can install Google Cloud CLI separately.',
       mbError, MB_OK, IDOK);
   end;
 end;

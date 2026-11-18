@@ -2,6 +2,6 @@
 /dist/
 /tts-cli
 /tts-cli.exe
-/tts
-/tts.exe
+/ttsi
+/ttsi.exe
 .env

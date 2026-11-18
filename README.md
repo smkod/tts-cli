@@ -10,15 +10,15 @@ Download the package for your platform from [GitHub Releases](https://github.com
 On Windows x64, run the setup executable and open a new terminal so it picks
 up the updated user PATH. If Google Cloud CLI is not already on your PATH, you
 can select the optional task to download and install it for your user. This
-requires internet access and does not sign you in. Uninstalling `tts` does not
+requires internet access and does not sign you in. Uninstalling `ttsi` does not
 remove Google Cloud CLI. On macOS or Linux, extract the matching archive,
-run `chmod +x tts` if needed, and place `tts` in a directory on your PATH.
+run `chmod +x ttsi` if needed, and place `ttsi` in a directory on your PATH.
 Prebuilt packages do not require Go. Compare the download's SHA-256 hash with
 `SHA256SUMS.txt` in the release assets.
 
 ### Install from source
 
-With Go 1.26 or later, run `go install ./cmd/tts` from a checkout and put Go's bin
+With Go 1.26 or later, run `go install ./cmd/ttsi` from a checkout and put Go's bin
 directory on your PATH.
 
 ### Configure Google Cloud access
@@ -27,8 +27,8 @@ Make sure your Google Cloud project has billing and the Text-to-Speech API
 enabled. With Google Cloud CLI on your PATH, run:
 
 ```sh
-tts login google --project YOUR_PROJECT_ID
-tts doctor --online --json
+ttsi login google --project YOUR_PROJECT_ID
+ttsi doctor --online --json
 ```
 
 The login command opens Google's sign-in flow through
@@ -48,38 +48,38 @@ permission or available quota.
 Start with one MP3. Once you've configured Google credentials, run:
 
 ```sh
-tts "Hello, how are you?" -o hello.mp3
+ttsi "Hello, how are you?" -o hello.mp3
 ```
 
 | Command | Shortcut | What it does |
 | --- | --- | --- |
-| `tts generate <text>` | `tts g <text>` | Turns one text argument into one MP3. Use `--output` (`-o`) to name the file. |
-| `tts batch <file>` | `tts b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates MP3s, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
-| `tts voices list` | `tts v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
-| `tts providers list` | `tts p ls` | Lists implemented providers. Currently only `google` is available. |
-| `tts login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
-| `tts capabilities` | `tts cap` | Summarizes supported formats and limits. Use `--json` for details such as locales and supported parameters. |
-| `tts config show` | `tts cfg sh` | Shows the config path and effective settings. With `--json`, it also shows saved YAML values separately. |
-| `tts config set <key=value>...` | `tts cfg s <key=value>...` | Validates and saves one or more settings together, for example `tts config set language=it-IT voice=kore`. |
-| `tts config unset <key>...` | `tts cfg u <key>...` | Removes saved settings, for example `tts config unset language voice`. Environment overrides and defaults still apply. |
-| `tts doctor` | `tts d` | Checks config, directory writability, and local credential hints. Add `--online` to probe Google without generating audio. |
-| `tts help [command]` | — | Shows help. Use `tts --help` for the top-level list or, for example, `tts batch --help` for flags. |
-| `tts completion <shell>` | — | Generates a completion script for `bash`, `zsh`, `fish`, or `powershell`. See `tts completion --help`. |
+| `ttsi generate <text>` | `ttsi g <text>` | Turns one text argument into one MP3. Use `--output` (`-o`) to name the file. |
+| `ttsi batch <file>` | `ttsi b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates MP3s, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
+| `ttsi voices list` | `ttsi v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
+| `ttsi providers list` | `ttsi p ls` | Lists implemented providers. Currently only `google` is available. |
+| `ttsi login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
+| `ttsi capabilities` | `ttsi cap` | Summarizes supported formats and limits. Use `--json` for details such as locales and supported parameters. |
+| `ttsi config show` | `ttsi cfg sh` | Shows the config path and effective settings. With `--json`, it also shows saved YAML values separately. |
+| `ttsi config set <key=value>...` | `ttsi cfg s <key=value>...` | Validates and saves one or more settings together, for example `ttsi config set language=it-IT voice=kore`. |
+| `ttsi config unset <key>...` | `ttsi cfg u <key>...` | Removes saved settings, for example `ttsi config unset language voice`. Environment overrides and defaults still apply. |
+| `ttsi doctor` | `ttsi d` | Checks config, directory writability, and local credential hints. Add `--online` to probe Google without generating audio. |
+| `ttsi help [command]` | — | Shows help. Use `ttsi --help` for the top-level list or, for example, `ttsi batch --help` for flags. |
+| `ttsi completion <shell>` | — | Generates a completion script for `bash`, `zsh`, `fish`, or `powershell`. See `ttsi completion --help`. |
 
 Both `generate` and `batch` accept `--lang`, `--voice`, `--provider`,
 `--cache-dir`, `--no-cache`, and `--dry-run`. The global flags are
 `--config PATH` to select a YAML file and `--json` for machine-readable results.
 
 ```sh
-tts generate "Come stai?" --lang it-IT --voice kore --output italian.mp3
-tts generate --dry-run --json -- "-text beginning with a dash"
-tts batch sentences.json --jobs 4 --output-dir audio
-tts voices list --lang it-IT
+ttsi generate "Come stai?" --lang it-IT --voice kore --output italian.mp3
+ttsi generate --dry-run --json -- "-text beginning with a dash"
+ttsi batch sentences.json --jobs 4 --output-dir audio
+ttsi voices list --lang it-IT
 ```
 
-`tts "<text>"` is shorthand for `tts generate "<text>"`. Put the text before
+`ttsi "<text>"` is shorthand for `ttsi generate "<text>"`. Put the text before
 generation-specific flags when using the shorthand. To speak a command name or
-alias literally, use the explicit form: `tts generate -- "g"`.
+alias literally, use the explicit form: `ttsi generate -- "g"`.
 
 The default voice is `en-US-Chirp3-HD-Kore`. Aliases resolve against the bundled
 catalog and are case-insensitive. A full Chirp 3 HD voice name can supply the locale
@@ -193,7 +193,7 @@ settings operations without introducing a separate configuration path.
 
 Run the credential-free tests with `go test ./...` when verification is
 authorized. To verify actual Google synthesis, explicitly opt in by running
-`tts g "Hello world" --output smoke-test.mp3` after configuring ADC. A cache
+`ttsi g "Hello world" --output smoke-test.mp3` after configuring ADC. A cache
 miss can incur billing. No automated test calls the live Google Cloud API.
 
 ### Release packaging

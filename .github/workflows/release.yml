@@ -36,11 +36,11 @@ jobs:
               if ($os -eq 'windows' -and $arch -ne 'amd64') { continue }
               $env:GOOS = $os
               $env:GOARCH = $arch
-              $name = "tts-$version-$os-$arch"
+              $name = "ttsi-$version-$os-$arch"
               $stage = "dist/staging/$name"
               New-Item -ItemType Directory -Path $stage | Out-Null
-              $binary = if ($os -eq 'windows') { 'tts.exe' } else { 'tts' }
-              go build -trimpath -o "$stage/$binary" ./cmd/tts
+              $binary = if ($os -eq 'windows') { 'ttsi.exe' } else { 'ttsi' }
+              go build -trimpath -o "$stage/$binary" ./cmd/ttsi
               if ($LASTEXITCODE -ne 0) { throw "Build failed for $os/$arch." }
               Copy-Item README.md $stage
               if ($os -eq 'windows') {
@@ -63,13 +63,13 @@ jobs:
           if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)." }
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
           if ($target -notin $userPath) { throw 'Installer did not update the user PATH.' }
-          & "$target/tts.exe" generate --dry-run 'Hello world'
+          & "$target/ttsi.exe" generate --dry-run 'Hello world'
           if ($LASTEXITCODE -ne 0) { throw 'Installed CLI failed its offline smoke test.' }
           $uninstaller = Get-Item "$target/unins*.exe"
           $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -WindowStyle Hidden -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)." }
           $userPath = [Environment]::GetEnvironmentVariable('Path', 'User') -split ';'
-          if (($target -in $userPath) -or (Test-Path "$target/tts.exe")) {
+          if (($target -in $userPath) -or (Test-Path "$target/ttsi.exe")) {
             throw 'Uninstaller did not clean up.'
           }
       - name: Generate checksums

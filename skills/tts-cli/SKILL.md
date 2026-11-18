@@ -1,14 +1,14 @@
 ---
 name: tts-cli
-description: Use the tts executable to discover Google Chirp 3 HD voices and generate or recover single and batch MP3 outputs. Use for general audio workflows and optional Anki pronunciation audio via AnkiConnect.
+description: Use the ttsi executable to discover Google Chirp 3 HD voices and generate or recover single and batch MP3 outputs. Use for general audio workflows and optional Anki pronunciation audio via AnkiConnect.
 ---
 
-# Generate MP3 audio with tts
+# Generate MP3 audio with ttsi
 
-- Install with `go install github.com/smkod/tts-cli/cmd/tts@<release>` once a release is available, or `go install ./cmd/tts` from a checkout. Use Go 1.26 or later. Enable Google Cloud Text-to-Speech and configure Application Default Credentials. Do not put secrets in the YAML file.
-- Discover the contract with `tts cap --json`, providers with `tts p ls --json`, and voice aliases with `tts v ls --lang it-IT --json`. Use `--online` only to check Google's current inventory. `tts d --json` checks local setup; `tts d --online --json` checks API access without synthesizing.
-- Preview with `tts g "Come stai?" --lang it-IT --voice kore --dry-run --json`. To create the file, repeat without `--dry-run`. Read `data.file` (absolute) and `data.cached` rather than guessing the file path. Use `tts g -- "text"` if text resembles a reserved command or starts with a dash.
-- For a batch, supply `{"items":[{"id":"note-42","text":"Come stai?","language":"it-IT"}]}` and run `tts b items.json --json`. On exit 3, parse `data.items` by ID; correct invalid input or rerun only failed retryable items after checking the error. The program already retries transient errors; stop on auth, quota, or permanent errors until the cause is resolved. See the README for the JSON and exit-code contract.
+- Install with `go install github.com/smkod/tts-cli/cmd/ttsi@<release>` once a release is available, or `go install ./cmd/ttsi` from a checkout. Use Go 1.26 or later. Enable Google Cloud Text-to-Speech and configure Application Default Credentials. Do not put secrets in the YAML file.
+- Discover the contract with `ttsi cap --json`, providers with `ttsi p ls --json`, and voice aliases with `ttsi v ls --lang it-IT --json`. Use `--online` only to check Google's current inventory. `ttsi d --json` checks local setup; `ttsi d --online --json` checks API access without synthesizing.
+- Preview with `ttsi g "Come stai?" --lang it-IT --voice kore --dry-run --json`. To create the file, repeat without `--dry-run`. Read `data.file` (absolute) and `data.cached` rather than guessing the file path. Use `ttsi g -- "text"` if text resembles a reserved command or starts with a dash.
+- For a batch, supply `{"items":[{"id":"note-42","text":"Come stai?","language":"it-IT"}]}` and run `ttsi b items.json --json`. On exit 3, parse `data.items` by ID; correct invalid input or rerun only failed retryable items after checking the error. The program already retries transient errors; stop on auth, quota, or permanent errors until the cause is resolved. See the README for the JSON and exit-code contract.
 - Keep the cache enabled unless explicitly asked to regenerate. A cache hit needs no Google credentials. Dry runs produce no file; do not upload a predicted path. Never bypass cache just to work around a conflicting output; choose a new file path instead.
 
 ## Optional AnkiConnect workflow

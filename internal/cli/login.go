@@ -33,7 +33,7 @@ func (a *app) login() *cobra.Command {
 				return err
 			}
 			a.result = map[string]string{"provider": "google", "quota_project": project}
-			a.human = "Google Application Default Credentials configured. Run tts doctor --online to check access."
+			a.human = "Google Application Default Credentials configured. Run ttsi doctor --online to check access."
 			return nil
 		})
 	google.Flags().StringVar(&project, "project", "", "Set the ADC quota project by ID")
