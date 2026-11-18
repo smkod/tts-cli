@@ -10,22 +10,22 @@ import (
 
 func TestConfigurationPrecedence(t *testing.T) {
 	c := Config{
-		Stored:   map[string]string{"language": "fr-FR", "jobs": "8"},
-		env:      map[string]string{"language": "de-DE"},
-		defaults: map[string]string{"provider": "google", "voice": "kore", "output_dir": t.TempDir(), "cache_dir": t.TempDir(), "jobs": "4"},
+		Stored:   map[string]string{"language": "fr-FR", "format": FormatWAV, "jobs": "8"},
+		env:      map[string]string{"language": "de-DE", "format": FormatMP3},
+		defaults: map[string]string{"format": FormatMP3, "provider": "google", "voice": "kore", "output_dir": t.TempDir(), "cache_dir": t.TempDir(), "jobs": "4"},
 	}
 	for _, tc := range []struct {
-		name        string
-		flags, item map[string]string
-		lang        string
+		name         string
+		flags, item  map[string]string
+		lang, format string
 	}{
-		{"flag wins", map[string]string{"language": "it-IT"}, map[string]string{"language": "en-US"}, "it-IT"},
-		{"item wins", nil, map[string]string{"language": "en-US"}, "en-US"},
-		{"environment wins", nil, nil, "de-DE"},
+		{"flag wins", map[string]string{"language": "it-IT", "format": FormatMP3}, map[string]string{"language": "en-US", "format": FormatWAV}, "it-IT", FormatMP3},
+		{"item wins", nil, map[string]string{"language": "en-US", "format": FormatWAV}, "en-US", FormatWAV},
+		{"environment wins", nil, nil, "de-DE", FormatMP3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, err := c.Resolve(tc.flags, tc.item)
-			if err != nil || s.Language != tc.lang || s.Jobs != 8 {
+			if err != nil || s.Language != tc.lang || s.Format != tc.format || s.Jobs != 8 {
 				t.Fatalf("got %+v, %v", s, err)
 			}
 		})

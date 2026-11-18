@@ -160,7 +160,7 @@ func requiresArgs(_ *cobra.Command, args []string) error {
 func (a *app) root() *cobra.Command {
 	root := &cobra.Command{Use: "ttsi", Short: "Generate Chirp 3 HD speech for people and scripts.",
 		SilenceUsage: true, SilenceErrors: true, DisableSuggestions: true,
-		Example: "  ttsi \"Hello there\"\n  ttsi g \"Come stai?\" --lang it-IT --json\n  ttsi cfg s language=it-IT voice=kore",
+		Example: "  ttsi \"Hello there\"\n  ttsi g \"Come stai?\" --lang it-IT --json\n  ttsi voices list --lang it-IT",
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit versioned JSON")
 	root.PersistentFlags().StringVar(&a.configFlag, "config", "", "Select a YAML configuration file")
@@ -194,16 +194,17 @@ func (a *app) settings(cmd *cobra.Command, flags map[string]string) (core.Settin
 }
 
 type synthFlags struct {
-	lang, voice, provider, cache, out, outDir string
-	noCache, dryRun                           bool
-	jobs                                      int
+	lang, voice, provider, cache, out, outDir, format string
+	noCache, dryRun                                   bool
+	jobs                                              int
 }
 
 func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
 	flags := cmd.Flags()
 	flags.StringVar(&f.lang, "lang", "", "Select a voice language")
-	flags.StringVar(&f.voice, "voice", "", "Select a voice alias or full Chirp 3 HD ID")
+	flags.StringVar(&f.voice, "voice", "", "Select a voice alias, full Chirp 3 HD ID, or random (default if not configured)")
 	flags.StringVar(&f.provider, "provider", "", "Select a synthesis provider")
+	flags.StringVar(&f.format, "format", "", "Select the output format (wav or mp3)")
 	flags.StringVar(&f.cache, "cache-dir", "", "Override the cache directory")
 	flags.BoolVar(&f.noCache, "no-cache", false, "Skip cache reads and writes")
 	flags.BoolVar(&f.dryRun, "dry-run", false, "Inspect the request without network or file writes")
@@ -211,12 +212,12 @@ func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
 		flags.StringVar(&f.outDir, "output-dir", "", "Override the output directory")
 		flags.IntVar(&f.jobs, "jobs", 4, "Set batch concurrency (1–16)")
 	} else {
-		flags.StringVarP(&f.out, "output", "o", "", "Write to this MP3 path")
+		flags.StringVarP(&f.out, "output", "o", "", "Write to this audio file path")
 	}
 }
 func (f *synthFlags) values(cmd *cobra.Command) map[string]string {
 	out := map[string]string{}
-	values := [][3]string{{"lang", "language", f.lang}, {"voice", "voice", f.voice}, {"provider", "provider", f.provider},
+	values := [][3]string{{"format", "format", f.format}, {"lang", "language", f.lang}, {"voice", "voice", f.voice}, {"provider", "provider", f.provider},
 		{"cache-dir", "cache_dir", f.cache}, {"output-dir", "output_dir", f.outDir}, {"jobs", "jobs", fmt.Sprint(f.jobs)}}
 	for _, v := range values {
 		if cmd.Flags().Changed(v[0]) {
@@ -228,7 +229,7 @@ func (f *synthFlags) values(cmd *cobra.Command) map[string]string {
 
 func (a *app) generate() *cobra.Command {
 	f := &synthFlags{}
-	cmd := command("generate <text>", "Generate one MP3", []string{"g"}, exactly(1), func(cmd *cobra.Command, args []string) error {
+	cmd := command("generate <text>", "Generate one audio file", []string{"g"}, exactly(1), func(cmd *cobra.Command, args []string) error {
 		if e := core.ValidateText(args[0]); e != nil {
 			return e
 		}
@@ -299,12 +300,12 @@ func (a *app) capabilities() *cobra.Command {
 		a.result = map[string]any{
 			"providers": providerIDs, "default_provider": "google", "voice_family": "Chirp3-HD", "languages": core.Languages(),
 			"voices_command": "ttsi voices list --json", "catalog_source": "local", "catalog_date": core.CatalogDate,
-			"input_formats": []string{"text"}, "output_formats": []string{"mp3"}, "max_text_bytes": core.MaxTextBytes,
-			"synthesis_parameters":   []string{"provider", "language", "voice"},
+			"input_formats": []string{"text"}, "output_formats": []string{core.FormatWAV, core.FormatMP3}, "default_output_format": core.FormatMP3, "max_text_bytes": core.MaxTextBytes,
+			"synthesis_parameters":   []string{"provider", "language", "voice", "format"},
 			"unsupported_parameters": []string{"ssml", "speaking_rate", "pitch", "custom_pronunciation", "pause_control"},
 			"batch":                  true, "cache": true, "dry_run": true,
 		}
-		a.human = "Google Chirp 3 HD · plain text to MP3 · 5,000 UTF-8 bytes per item\nUse ttsi voices list to discover languages and voices."
+		a.human = "Google Chirp 3 HD · plain text to WAV or MP3 (default: MP3 at 48 kHz and 64 kbps) · 5,000 UTF-8 bytes per item\nUse ttsi voices list to discover languages and voices."
 		return nil
 	})
 }
@@ -355,7 +356,7 @@ func (a *app) edit(cmd *cobra.Command, set map[string]string, unset []string) er
 }
 func (a *app) configResult(c core.Config, s core.Settings, heading string) {
 	a.result = map[string]any{"file": c.Path, "stored": c.Stored, "effective": s}
-	a.human = fmt.Sprintf("%s: %s\nProvider: %s\nLanguage: %s\nVoice: %s\nOutput directory: %s\nCache directory: %s\nJobs: %d", heading, c.Path, s.Provider, s.Language, s.Voice, s.OutputDir, s.CacheDir, s.Jobs)
+	a.human = fmt.Sprintf("%s: %s\nProvider: %s\nLanguage: %s\nVoice: %s\nFormat: %s\nOutput directory: %s\nCache directory: %s\nJobs: %d", heading, c.Path, s.Provider, s.Language, s.Voice, s.Format, s.OutputDir, s.CacheDir, s.Jobs)
 }
 
 type check struct {

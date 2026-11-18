@@ -1,6 +1,6 @@
 # tts-cli
 
-A lightweight text-to-speech CLI for Windows, macOS, and Linux. It generates MP3
+A lightweight text-to-speech CLI for Windows, macOS, and Linux. It generates WAV or MP3
 audio using Google Chirp 3 HD, with local caching, batch manifests, and stable JSON
 output. It does not depend on Anki.
 
@@ -53,8 +53,8 @@ ttsi "Hello, how are you?" -o hello.mp3
 
 | Command | Shortcut | What it does |
 | --- | --- | --- |
-| `ttsi generate <text>` | `ttsi g <text>` | Turns one text argument into one MP3. Use `--output` (`-o`) to name the file. |
-| `ttsi batch <file>` | `ttsi b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates MP3s, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
+| `ttsi generate <text>` | `ttsi g <text>` | Turns one text argument into one audio file. Use `--output` (`-o`) to name the file. |
+| `ttsi batch <file>` | `ttsi b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates audio files, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
 | `ttsi voices list` | `ttsi v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
 | `ttsi providers list` | `ttsi p ls` | Lists implemented providers. Currently only `google` is available. |
 | `ttsi login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
@@ -67,11 +67,13 @@ ttsi "Hello, how are you?" -o hello.mp3
 | `ttsi completion <shell>` | — | Generates a completion script for `bash`, `zsh`, `fish`, or `powershell`. See `ttsi completion --help`. |
 
 Both `generate` and `batch` accept `--lang`, `--voice`, `--provider`,
-`--cache-dir`, `--no-cache`, and `--dry-run`. The global flags are
+`--format`, `--cache-dir`, `--no-cache`, and `--dry-run`. The global flags are
 `--config PATH` to select a YAML file and `--json` for machine-readable results.
 
 ```sh
 ttsi generate "Come stai?" --lang it-IT --voice kore --output italian.mp3
+ttsi generate "Come stai?" --lang it-IT --format wav -o italian.wav
+ttsi config set format=wav
 ttsi generate --dry-run --json -- "-text beginning with a dash"
 ttsi batch sentences.json --jobs 4 --output-dir audio
 ttsi voices list --lang it-IT
@@ -81,7 +83,12 @@ ttsi voices list --lang it-IT
 generation-specific flags when using the shorthand. To speak a command name or
 alias literally, use the explicit form: `ttsi generate -- "g"`.
 
-The default voice is `en-US-Chirp3-HD-Kore`. Aliases resolve against the bundled
+By default, each generation (including each batch item) randomly picks a voice
+for its locale from the bundled catalog. A voice set in the configuration,
+environment, or batch item still applies unless overridden. Pass `--voice random`
+to force random selection or `--voice <alias>` to repeat a specific voice.
+Use `ttsi voices list --lang it-IT` to see the IDs and aliases for a locale.
+Aliases resolve against the bundled
 catalog and are case-insensitive. A full Chirp 3 HD voice name can supply the locale
 when no language was set. Use `voices list --online` to discover full IDs before a
 local catalog update. The local catalog is a dated snapshot from
@@ -91,8 +98,9 @@ Offline listing is not a live availability guarantee.
 The CLI accepts nonblank plain UTF-8 text, up to
 [5,000 bytes](https://docs.cloud.google.com/text-to-speech/quotas) per item.
 It preserves the original text, including surrounding whitespace.
-Synthesis uses synchronous MP3 on the global endpoint. SSML, pitch, rate,
-and other encodings are not exposed, including
+Synthesis uses the synchronous global endpoint. MP3 at 48 kHz and 64 kbps is the default and is the most widely compatible audio format
+across [Anki clients](https://docs.ankiweb.net/media.html). WAV (`LINEAR16`,
+uncompressed 16-bit PCM) uses the native sample rate. SSML, pitch, rate, and other encodings are not exposed, including
 [Google's preview controls](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd).
 
 ## Configuration and files
@@ -111,7 +119,8 @@ can leave a `.lock` file; remove it only after confirming no writer is active.
 | --- | --- | --- |
 | `provider` | `TTS_PROVIDER` | `google` |
 | `language` | `TTS_LANGUAGE` | `en-US` (or the locale of a full voice ID) |
-| `voice` | `TTS_VOICE` | `kore` |
+| `voice` | `TTS_VOICE` | `random` |
+| `format` | `TTS_FORMAT` | `mp3` (`wav` is also supported) |
 | `output_dir` | `TTS_OUTPUT_DIR` | Current directory |
 | `cache_dir` | `TTS_CACHE_DIR` | `tts` under the OS user cache directory |
 | `jobs` | `TTS_JOBS` | `4` (range: 1–16) |
@@ -119,7 +128,12 @@ can leave a `.lock` file; remove it only after confirming no writer is active.
 Relative paths resolve against the working directory. The CLI does not load
 `.env` files automatically. Never store credentials in YAML.
 
-Generated files default to `<request-hash>.mp3` in the output directory.
+Generated files default to `<request-hash>.wav` or `<request-hash>.mp3` in the
+output directory. Cache entries are separate by format. An explicit output
+path must end with the extension for the selected format.
+The selected voice is part of the cache key and is reported as `data.voice` in
+JSON. A dry run also picks a voice; pass that voice ID with `--voice` if the
+actual run must match the preview.
 Use `generate --output` or `batch --output-dir` to change the destination.
 Output publication requires filesystem hard-link support. Existing byte-identical
 files are reused, but different files or symlinks are never overwritten; choose
@@ -144,7 +158,7 @@ A batch file is UTF-8 JSON up to 32 MiB:
 {"items":[{"id":"note-101","text":"How are you?"},{"id":"note-102","text":"Come stai?","language":"it-IT","voice":"kore"}]}
 ```
 
-IDs must be nonempty and unique. Language and voice are optional. Bad items do
+IDs must be nonempty and unique. Language, voice, and format are optional. Bad items do
 not prevent valid items from running. Transient synthesis failures are retried
 at most twice; permanent errors and hard quota failures are not retried.
 The batch always prints an ordered JSON manifest to stdout. To recover from
@@ -160,12 +174,12 @@ top-level error. Doctor failures can include both check details and an error.
 
 | Operation | `data` |
 | --- | --- |
-| `generate` | `file` (absolute), `provider`, `voice`, `language`, `cached`, `characters` (Unicode code points), `cache_status` (`hit`, `miss`, `corrupt` for preview, or `bypassed`), and optional `dry_run` |
+| `generate` | `file` (absolute), `provider`, `voice`, `language`, `format`, `cached`, `characters` (Unicode code points), `cache_status` (`hit`, `miss`, `corrupt` for preview, or `bypassed`), and optional `dry_run` |
 | `batch` | `items` (input order), `total`, `succeeded`, `failed`, optional `dry_run`; each item has `id`, `success` and either generation `data` or `error` |
 | `voices list` | `source` (`local` or `google`), `voices` (`name`, `language`, `alias`), and `catalog_date` for the snapshot |
 | `providers list` | `providers` (provider IDs) |
 | `login google` | `provider` (Google provider ID), `quota_project` (explicit project ID, or empty if omitted) |
-| `capabilities` | `providers`, `default_provider`, `voice_family`, `languages`, `voices_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `batch`, `cache`, `dry_run` |
+| `capabilities` | `providers`, `default_provider`, `voice_family`, `languages`, `voices_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `default_output_format`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `batch`, `cache`, `dry_run` |
 | `config show/set/unset` | `file`, `stored` (saved strings), `effective` (resolved settings) |
 | `doctor` | `checks` (`check`, `status`, `message`), `online` |
 

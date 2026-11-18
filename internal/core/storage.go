@@ -14,6 +14,65 @@ import (
 
 const maxAudio = 32 << 20
 
+func validAudio(b []byte, format string) bool {
+	if len(b) > maxAudio {
+		return false
+	}
+	switch format {
+	case FormatWAV:
+		return validWAV(b)
+	case FormatMP3:
+		return validMP3(b)
+	default:
+		return false
+	}
+}
+
+// validWAV checks a complete RIFF/WAVE file containing 16-bit PCM.
+func validWAV(b []byte) bool {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return false
+	}
+	order := binary.LittleEndian
+	if uint64(order.Uint32(b[4:8])) != uint64(len(b)-8) {
+		return false
+	}
+	var blockAlign uint32
+	var hasData bool
+	for b = b[12:]; len(b) > 0; {
+		if len(b) < 8 {
+			return false
+		}
+		size := order.Uint32(b[4:8])
+		padded := uint64(size) + uint64(size%2)
+		if padded > uint64(len(b)-8) {
+			return false
+		}
+		chunk := b[8 : 8+int(size)]
+		switch string(b[:4]) {
+		case "fmt ":
+			if blockAlign != 0 || len(chunk) < 16 || order.Uint16(chunk[:2]) != 1 ||
+				order.Uint16(chunk[14:16]) != 16 {
+				return false
+			}
+			channels := uint32(order.Uint16(chunk[2:4]))
+			rate := uint64(order.Uint32(chunk[4:8]))
+			blockAlign = uint32(order.Uint16(chunk[12:14]))
+			if channels == 0 || rate == 0 || blockAlign != 2*channels ||
+				uint64(order.Uint32(chunk[8:12])) != rate*uint64(blockAlign) {
+				return false
+			}
+		case "data":
+			if hasData || blockAlign == 0 || size == 0 || size%blockAlign != 0 {
+				return false
+			}
+			hasData = true
+		}
+		b = b[8+int(padded):]
+	}
+	return hasData
+}
+
 func samePath(a, b string) bool {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		return strings.EqualFold(a, b)
@@ -68,7 +127,7 @@ func regularData(path string, limit int64) ([]byte, error) {
 	}
 	return data, err
 }
-func readCache(path string) ([]byte, string) {
+func readCache(path, format string) ([]byte, string) {
 	b, err := regularData(path, maxAudio+sha256.Size)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, "miss"
@@ -78,7 +137,7 @@ func readCache(path string) ([]byte, string) {
 	}
 	audio := b[sha256.Size:]
 	sum := sha256.Sum256(audio)
-	if !bytes.Equal(sum[:], b[:sha256.Size]) || !validMP3(audio) {
+	if !bytes.Equal(sum[:], b[:sha256.Size]) || !validAudio(audio, format) {
 		return nil, "corrupt"
 	}
 	return audio, "hit"

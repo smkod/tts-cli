@@ -24,7 +24,7 @@ func frame(marker byte) []byte {
 	return data
 }
 func testSettings(t *testing.T) Settings {
-	return Settings{Provider: "google", Language: "en-US", Voice: "en-US-Chirp3-HD-Kore", OutputDir: t.TempDir(), CacheDir: t.TempDir(), Jobs: 4}
+	return Settings{Format: FormatMP3, Provider: "google", Language: "en-US", Voice: "en-US-Chirp3-HD-Kore", OutputDir: t.TempDir(), CacheDir: t.TempDir(), Jobs: 4}
 }
 
 func TestVoiceResolution(t *testing.T) {
@@ -80,6 +80,28 @@ func TestMP3Validation(t *testing.T) {
 		})
 	}
 }
+func TestWAVValidation(t *testing.T) {
+	valid := []byte("RIFF\x26\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00")
+	badSize := append([]byte(nil), valid...)
+	badSize[40] = 0xff
+	for _, tc := range []struct {
+		name  string
+		audio []byte
+		want  bool
+	}{
+		{"PCM WAV", valid, true},
+		{"truncated", valid[:len(valid)-1], false},
+		{"oversized data chunk", badSize, false},
+		{"MP3", frame(1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := validAudio(tc.audio, FormatWAV); got != tc.want {
+				t.Fatalf("validAudio = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCacheAndOutputSafety(t *testing.T) {
 	ctx := context.Background()
 	s := testSettings(t)
@@ -123,7 +145,7 @@ func TestCacheAndOutputSafety(t *testing.T) {
 	}
 }
 func TestCacheKey(t *testing.T) {
-	r := Request{Text: "hello", Provider: "google", Language: "en-US", Voice: "en-US-Chirp3-HD-Kore"}
+	r := Request{Format: FormatMP3, Text: "hello", Provider: "google", Language: "en-US", Voice: "en-US-Chirp3-HD-Kore"}
 	first := cacheKey(r)
 	if len(first) != 64 || first != cacheKey(r) {
 		t.Fatal("cache key is not stable SHA-256")
@@ -135,7 +157,7 @@ func TestCacheKey(t *testing.T) {
 }
 func TestCorruptCacheIsNotReused(t *testing.T) {
 	s := testSettings(t)
-	key := cacheKey(Request{"hello", s.Provider, s.Language, s.Voice})
+	key := cacheKey(Request{Text: "hello", Provider: s.Provider, Language: s.Language, Voice: s.Voice, Format: s.Format})
 	p := filepath.Join(s.CacheDir, "v1", key[:2], key+".entry")
 	if err := storeCache(p, frame(1)); err != nil {
 		t.Fatal(err)
