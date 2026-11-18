@@ -118,7 +118,7 @@ Offline listing is not a live availability guarantee.
 The CLI accepts nonblank plain UTF-8 text, up to
 [5,000 bytes](https://docs.cloud.google.com/text-to-speech/quotas) per item.
 It preserves the original text, including surrounding whitespace.
-Synthesis uses the synchronous global endpoint. MP3 at 48 kHz and 64 kbps is the default and is the most widely compatible audio format
+Synthesis uses the synchronous global endpoint. MP3 at 96 kbps is the default and is the most widely compatible audio format
 across [Anki clients](https://docs.ankiweb.net/media.html). WAV (`LINEAR16`,
 uncompressed 16-bit PCM) uses the native sample rate. SSML, pitch, rate, and other encodings are not exposed, including
 [Google's preview controls](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd).
@@ -241,3 +241,40 @@ to try the installer on a separate Windows machine. The installer is unsigned.
 To publish, push a version tag such as `v0.1.0` on the intended commit.
 A tag such as `v0.1.0-rc.1` publishes a prerelease. GitHub-hosted runners build
 and publish the packages; no local installer toolchain or GitHub CLI is needed.
+
+## Local MP3 encoding with FFmpeg
+
+MP3 generation requests uncompressed LINEAR16 WAV from Google and encodes it
+locally with FFmpeg `libmp3lame`. Intermediate WAV audio stays in memory, not in
+an output file. WAV output remains available and does not require FFmpeg.
+FFmpeg beside the `ttsi` executable takes precedence over PATH. MP3 cache hits
+and dry runs do not require it. Missing or incompatible FFmpeg is rejected before
+making a billable synthesis request.
+
+```sh
+ttsi generate "Hello" --bitrate 96 -o hello.mp3
+ttsi config set bitrate=128
+```
+
+The `bitrate` YAML setting, `TTS_BITRATE` environment variable, and `--bitrate`
+flag select kbps. Batch items may include a numeric `"bitrate": 64` field.
+Precedence is flags, batch item, environment, YAML, default (96).
+Supported rates: 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144,
+160, 192, 224, 256, 320. Bitrate is included in MP3 cache keys; old direct-Google
+MP3 entries are not reused. Above 160 kbps the encoder resamples to 48 kHz for
+MPEG-1 compatibility; this does not add source detail. Lower rates save space
+but lose more information. Bitrate does not affect WAV output.
+
+Release maintainers can bundle reviewed static FFmpeg binaries for every target
+in `FFMPEG_BUNDLE_ROOT/<os>-<arch>/`, with `ffmpeg` (`ffmpeg.exe` on Windows),
+`SHA256SUMS.txt`, and `LICENSES/`. The checksum file must contain the executable's
+SHA-256 followed by its filename. LICENSES must contain the distribution notices,
+license texts, build configuration, upstream source URL and corresponding-source
+availability instructions required by that exact build. Verify redistribution
+compliance before publishing; a checksum alone does not establish provenance.
+No unverified third-party downloads are performed by the release workflow.
+
+If `FFMPEG_BUNDLE_ROOT` is unset, release packaging warns and omits FFmpeg;
+users of those packages must install FFmpeg with `libmp3lame` separately for MP3
+output. Once a bundle root is supplied, missing assets or invalid checksums and
+notices fail packaging rather than silently publishing an incomplete bundle.

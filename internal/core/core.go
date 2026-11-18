@@ -167,11 +167,14 @@ func invalidVoice() *Problem {
 	return Fail("INVALID_VOICE", "Unknown Chirp 3 HD voice or locale. Check the voice list for supported aliases.", false)
 }
 
-type Request struct{ Text, Provider, Language, Voice, Format string }
+type Request struct {
+	Text, Provider, Language, Voice, Format string
+	Bitrate                                 int
+}
 
 const (
 	MP3SampleRateHz = 48_000
-	MP3BitrateKbps  = 64
+	MP3BitrateKbps  = 96
 )
 
 type Provider interface {
@@ -186,6 +189,7 @@ type Backend interface {
 	Close() error
 }
 type Generation struct {
+	Bitrate     int    `json:"bitrate,omitempty"`
 	Format      string `json:"format"`
 	File        string `json:"file"`
 	Provider    string `json:"provider"`
@@ -223,7 +227,11 @@ func ValidateText(text string) error {
 func cacheKey(r Request) string {
 	fields := []any{"v1", r.Text, r.Provider, "Chirp3-HD", r.Voice, r.Language, r.Format}
 	if r.Format == FormatMP3 {
-		fields = append(fields, MP3SampleRateHz, MP3BitrateKbps)
+		bitrate := r.Bitrate
+		if bitrate == 0 {
+			bitrate = MP3BitrateKbps
+		}
+		fields = append(fields, "ffmpeg-libmp3lame-v1", bitrate)
 	}
 	b, _ := json.Marshal(fields)
 	h := sha256.Sum256(b)
@@ -242,7 +250,7 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 		v := voices[rand.IntN(len(voices))]
 		s.Language, s.Voice = v.Language, v.Name
 	}
-	r := Request{Text: text, Provider: s.Provider, Language: s.Language, Voice: s.Voice, Format: s.Format}
+	r := Request{Text: text, Provider: s.Provider, Language: s.Language, Voice: s.Voice, Format: s.Format, Bitrate: s.Bitrate}
 	if r.Format != FormatWAV && r.Format != FormatMP3 {
 		return Generation{}, Fail("INVALID_CONFIG", "Format must be wav or mp3.", false)
 	}
@@ -261,6 +269,12 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 		return Generation{}, Fail("INVALID_INPUT", "Output conflicts with the cache entry.", false)
 	}
 	result := Generation{Format: r.Format, File: out, Provider: r.Provider, Voice: r.Voice, Language: r.Language, Characters: utf8.RuneCountInString(text), DryRun: o.DryRun}
+	if r.Format == FormatMP3 {
+		result.Bitrate = r.Bitrate
+		if result.Bitrate == 0 {
+			result.Bitrate = MP3BitrateKbps
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return Generation{}, err
 	}

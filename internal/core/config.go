@@ -17,6 +17,7 @@ const (
 )
 
 type Settings struct {
+	Bitrate   int    `json:"bitrate" yaml:"bitrate"`
 	Format    string `json:"format" yaml:"format"`
 	Provider  string `json:"provider" yaml:"provider"`
 	Language  string `json:"language" yaml:"language"`
@@ -26,7 +27,7 @@ type Settings struct {
 	Jobs      int    `json:"jobs" yaml:"jobs"`
 }
 
-var Keys = []string{"provider", "language", "voice", "format", "output_dir", "cache_dir", "jobs"}
+var Keys = []string{"provider", "language", "voice", "format", "output_dir", "cache_dir", "jobs", "bitrate"}
 
 type Config struct {
 	Path     string
@@ -56,7 +57,7 @@ func ConfigPath(flag string) (string, bool, error) {
 
 func LoadConfig(path string, explicit, allowCreate bool) (Config, error) {
 	c := Config{Path: path, Stored: map[string]string{}, env: map[string]string{}, defaults: map[string]string{
-		"format": FormatMP3, "provider": "google", "voice": "random", "output_dir": ".", "jobs": "4",
+		"bitrate": "96", "format": FormatMP3, "provider": "google", "voice": "random", "output_dir": ".", "jobs": "4",
 	}}
 	if d, e := os.UserCacheDir(); e == nil {
 		c.defaults["cache_dir"] = filepath.Join(d, "tts")
@@ -85,7 +86,7 @@ func LoadConfig(path string, explicit, allowCreate bool) (Config, error) {
 	seen := map[string]bool{}
 	for i := 0; i < len(n.Content[0].Content); i += 2 {
 		k, v := n.Content[0].Content[i], n.Content[0].Content[i+1]
-		if k.Tag != "!!str" || !validKey(k.Value) || seen[k.Value] || v.Kind != yaml.ScalarNode || (v.Tag != "!!str" && !(k.Value == "jobs" && v.Tag == "!!int")) {
+		if k.Tag != "!!str" || !validKey(k.Value) || seen[k.Value] || v.Kind != yaml.ScalarNode || (v.Tag != "!!str" && !((k.Value == "jobs" || k.Value == "bitrate") && v.Tag == "!!int")) {
 			return c, Fail("INVALID_CONFIG", "Configuration contains an unknown, duplicate or invalid setting.", false)
 		}
 		seen[k.Value] = true
@@ -141,6 +142,10 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		return s, Fail("INVALID_CONFIG", "Jobs must be an integer between 1 and 16.", false)
 	}
 	s.Jobs = jobs
+	s.Bitrate, err = strconv.Atoi(get("bitrate"))
+	if err != nil || !ValidBitrate(s.Bitrate) {
+		return s, Fail("INVALID_CONFIG", "Bitrate must be a supported MP3 bitrate in kbps (8-320).", false)
+	}
 	if strings.TrimSpace(s.OutputDir) == "" || strings.TrimSpace(s.CacheDir) == "" {
 		return s, Fail("INVALID_CONFIG", "Output and cache directories must not be blank.", false)
 	}

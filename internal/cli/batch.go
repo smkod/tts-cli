@@ -74,6 +74,11 @@ func decodeItem(raw json.RawMessage) (string, batchItem, bool) {
 	for k, value := range fields {
 		switch k {
 		case "id", "text":
+		case "bitrate":
+			var n int
+			err := json.Unmarshal(value, &n)
+			item.Settings[k] = fmt.Sprint(n)
+			valid = valid && err == nil
 		case "language", "voice", "format":
 			v, ok := jsonText(value)
 			item.Settings[k] = v

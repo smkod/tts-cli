@@ -2,7 +2,6 @@ package googletts
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -16,7 +15,6 @@ import (
 	"github.com/googleapis/gax-go/v2/apierror"
 	"github.com/smkod/tts-cli/internal/core"
 	"google.golang.org/api/option"
-	beta "google.golang.org/api/texttospeech/v1beta1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -26,7 +24,6 @@ type Google struct {
 	mu      sync.Mutex
 	client  *texttospeech.Client
 	initErr error
-	mp3     *beta.Service
 }
 
 func New() *Google { return &Google{} }
@@ -69,52 +66,14 @@ func (g *Google) Close() error {
 
 func noRetry() gax.Retryer { return nil }
 
-func (g *Google) mp3Service(ctx context.Context) (*beta.Service, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if g.mp3 != nil {
-		return g.mp3, nil
-	}
-	svc, err := beta.NewService(ctx, option.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, core.Fail("AUTH_SETUP", "Cannot initialize Google Cloud TTS. Check Application Default Credentials and project setup.", false)
-	}
-	g.mp3 = svc
-	return svc, nil
-}
-
-func (g *Google) synthesizeMP3(ctx context.Context, r core.Request) ([]byte, error) {
-	svc, err := g.mp3Service(ctx)
-	if err != nil {
-		return nil, err
-	}
-	res, err := svc.Text.Synthesize(&beta.SynthesizeSpeechRequest{
-		Input: &beta.SynthesisInput{Text: r.Text},
-		Voice: &beta.VoiceSelectionParams{LanguageCode: r.Language, Name: r.Voice},
-		AudioConfig: &beta.AudioConfig{
-			AudioEncoding:   "MP3_64_KBPS",
-			SampleRateHertz: core.MP3SampleRateHz,
-		},
-	}).Context(ctx).Do()
-	if err != nil {
-		return nil, classify(err, true)
-	}
-	audio, err := base64.StdEncoding.DecodeString(res.AudioContent)
-	if err != nil {
-		return nil, core.Fail("INVALID_AUDIO", "Google returned invalid or incomplete audio for the selected format.", false)
-	}
-	return audio, nil
-}
-
 func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error) {
+	var encoder string
 	if r.Format == core.FormatMP3 {
-		return g.synthesizeMP3(ctx, r)
+		var err error
+		encoder, err = findFFmpeg(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	c, err := g.get(ctx)
 	if err != nil {
@@ -127,6 +86,9 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 	}, gax.WithRetry(noRetry))
 	if err != nil {
 		return nil, classify(err, true)
+	}
+	if r.Format == core.FormatMP3 {
+		return encodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)
 	}
 	return res.GetAudioContent(), nil
 }
@@ -200,7 +162,7 @@ func classify(err error, synthesis bool) error {
 	case codes.NotFound, codes.InvalidArgument:
 		if synthesis {
 			msg := strings.ToLower(st.Message())
-			if st.Code() == codes.NotFound || strings.Contains(msg, "voice") {
+			if st.Code() == codes.NotFound || (strings.Contains(msg, "voice") && !strings.Contains(msg, "encoding")) {
 				return core.Fail("INVALID_VOICE", "Google rejected the selected Chirp 3 HD voice. Check the online voice list.", false)
 			}
 		}

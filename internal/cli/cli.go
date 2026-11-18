@@ -197,6 +197,7 @@ type synthFlags struct {
 	lang, voice, provider, cache, out, outDir, format string
 	noCache, dryRun                                   bool
 	jobs                                              int
+	bitrate                                           int
 }
 
 func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
@@ -204,6 +205,7 @@ func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
 	flags.StringVar(&f.lang, "lang", "", "Select a voice language")
 	flags.StringVar(&f.voice, "voice", "", "Select a voice alias, full Chirp 3 HD ID, or random (default if not configured)")
 	flags.StringVar(&f.provider, "provider", "", "Select a synthesis provider")
+	flags.IntVar(&f.bitrate, "bitrate", 96, "Set MP3 bitrate in kbps (8-320; default 96)")
 	flags.StringVar(&f.format, "format", "", "Select the output format (wav or mp3)")
 	flags.StringVar(&f.cache, "cache-dir", "", "Override the cache directory")
 	flags.BoolVar(&f.noCache, "no-cache", false, "Skip cache reads and writes")
@@ -217,7 +219,7 @@ func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
 }
 func (f *synthFlags) values(cmd *cobra.Command) map[string]string {
 	out := map[string]string{}
-	values := [][3]string{{"format", "format", f.format}, {"lang", "language", f.lang}, {"voice", "voice", f.voice}, {"provider", "provider", f.provider},
+	values := [][3]string{{"bitrate", "bitrate", fmt.Sprint(f.bitrate)}, {"format", "format", f.format}, {"lang", "language", f.lang}, {"voice", "voice", f.voice}, {"provider", "provider", f.provider},
 		{"cache-dir", "cache_dir", f.cache}, {"output-dir", "output_dir", f.outDir}, {"jobs", "jobs", fmt.Sprint(f.jobs)}}
 	for _, v := range values {
 		if cmd.Flags().Changed(v[0]) {
@@ -301,11 +303,11 @@ func (a *app) capabilities() *cobra.Command {
 			"providers": providerIDs, "default_provider": "google", "voice_family": "Chirp3-HD", "languages": core.Languages(),
 			"voices_command": "ttsi voices list --json", "catalog_source": "local", "catalog_date": core.CatalogDate,
 			"input_formats": []string{"text"}, "output_formats": []string{core.FormatWAV, core.FormatMP3}, "default_output_format": core.FormatMP3, "max_text_bytes": core.MaxTextBytes,
-			"synthesis_parameters":   []string{"provider", "language", "voice", "format"},
+			"synthesis_parameters":   []string{"provider", "language", "voice", "format", "bitrate"},
 			"unsupported_parameters": []string{"ssml", "speaking_rate", "pitch", "custom_pronunciation", "pause_control"},
 			"batch":                  true, "cache": true, "dry_run": true,
 		}
-		a.human = "Google Chirp 3 HD · plain text to WAV or MP3 (default: MP3 at 48 kHz and 64 kbps) · 5,000 UTF-8 bytes per item\nUse ttsi voices list to discover languages and voices."
+		a.human = "Google Chirp 3 HD · plain text to WAV or MP3 (default: MP3 at 96 kbps via FFmpeg) · 5,000 UTF-8 bytes per item\nUse ttsi voices list to discover languages and voices."
 		return nil
 	})
 }

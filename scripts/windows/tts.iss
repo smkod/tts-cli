@@ -16,6 +16,10 @@ UsePreviousTasks=no
 Name: "gcloud"; Description: "Install Google Cloud CLI (may take a while; requires internet access)"; Flags: unchecked; Check: NeedsGoogleCloudCLI
 
 [Files]
+#if FileExists(AddBackslash(BinaryDir) + "ffmpeg.exe")
+Source: "{#BinaryDir}\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BinaryDir}\FFMPEG-LICENSES\*"; DestDir: "{app}\FFMPEG-LICENSES"; Flags: ignoreversion recursesubdirs createallsubdirs
+#endif
 Source: "{#BinaryDir}\ttsi.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BinaryDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 
