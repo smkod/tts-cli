@@ -167,6 +167,35 @@ func TestWorkspaceBoundsAndScrolling(t *testing.T) {
 	}
 }
 
+func TestGenerateKeepsActionsVisibleAcrossLayouts(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		size   tea.WindowSizeMsg
+		layout generateLayout
+	}{
+		{"columns", tea.WindowSizeMsg{Width: 100, Height: 24}, generateColumns},
+		{"stacked", tea.WindowSizeMsg{Width: 70, Height: 30}, generateStacked},
+		{"compact", tea.WindowSizeMsg{Width: 60, Height: 19}, generateCompact},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), Options{})
+			m.text.SetValue("Hi 😀")
+			next, _ := m.Update(tc.size)
+			m = next.(model)
+			m.setFocus(6)
+			if got := m.generateLayout(); got != tc.layout {
+				t.Fatalf("layout = %v, want %v", got, tc.layout)
+			}
+			view := m.View()
+			for _, want := range []string{"4 characters", "7 bytes", "› Output file", "Ctrl+G", "Ctrl+P"} {
+				if !strings.Contains(view, want) {
+					t.Errorf("missing %q in view:\n%s", want, view)
+				}
+			}
+		})
+	}
+}
+
 func TestUsageCannotSubmitHiddenForm(t *testing.T) {
 	for _, keyType := range []tea.KeyType{tea.KeyEnter, tea.KeyCtrlG, tea.KeyCtrlP, tea.KeyTab, tea.KeyShiftTab} {
 		t.Run(tea.KeyMsg{Type: keyType}.String(), func(t *testing.T) {
