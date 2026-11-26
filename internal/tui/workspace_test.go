@@ -149,7 +149,7 @@ func TestWorkspaceBoundsAndScrolling(t *testing.T) {
 		m.text.SetValue("Visible 😀")
 		next, _ := m.Update(size)
 		m = next.(model)
-		for _, screen := range []string{"generate", "usage"} {
+		for _, screen := range []string{"generate", "usage", "config"} {
 			m.screen = screen
 			view := m.View()
 			if lipgloss.Width(view) > size.Width || lipgloss.Height(view) > size.Height {

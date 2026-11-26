@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"io"
+	"maps"
 	"path/filepath"
+	"sync"
 
 	"github.com/charmbracelet/x/term"
 	"github.com/smkod/tts-cli/internal/core"
@@ -34,7 +36,11 @@ func (a *app) tui() *cobra.Command {
 				"The tui command requires interactive stdin and stdout terminals. "+
 					"Open a terminal or use generate for scripts and redirected output.", false)
 		}
-		config, err := a.load(cmd, false)
+		configPath, explicit, err := a.path(cmd)
+		if err != nil {
+			return err
+		}
+		config, err := core.LoadConfig(configPath, explicit, false)
 		if err != nil {
 			return err
 		}
@@ -42,16 +48,50 @@ func (a *app) tui() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		var configMu sync.RWMutex
 		// Provider warnings must never write into the active terminal renderer.
 		engine := &core.Engine{Provider: a.backend, Warn: func(string) {}}
 		generate := func(
 			ctx context.Context, overrides map[string]string, text string, options core.Options,
 		) (core.Generation, error) {
-			settings, err := config.ResolveInteractive(overrides)
+			configMu.RLock()
+			current := config
+			configMu.RUnlock()
+			settings, err := current.ResolveInteractive(overrides)
 			if err != nil {
 				return core.Generation{}, err
 			}
 			return engine.Generate(ctx, settings, text, options)
+		}
+		loadConfig := func(ctx context.Context) (tui.ConfigSnapshot, error) {
+			if err := ctx.Err(); err != nil {
+				return tui.ConfigSnapshot{}, err
+			}
+			loaded, err := core.LoadConfig(configPath, explicit, false)
+			if err != nil {
+				return tui.ConfigSnapshot{}, err
+			}
+			resolved, err := loaded.Resolve(nil, nil)
+			if err != nil {
+				return tui.ConfigSnapshot{}, err
+			}
+			configMu.Lock()
+			config = loaded
+			configMu.Unlock()
+			return configSnapshot(loaded, resolved, explicit), nil
+		}
+		saveConfig := func(ctx context.Context, set map[string]string, unset []string) (tui.ConfigSnapshot, error) {
+			if err := ctx.Err(); err != nil {
+				return tui.ConfigSnapshot{}, err
+			}
+			updated, resolved, err := core.EditConfig(configPath, explicit, set, unset)
+			if err != nil {
+				return tui.ConfigSnapshot{}, err
+			}
+			configMu.Lock()
+			config = updated
+			configMu.Unlock()
+			return configSnapshot(updated, resolved, explicit), nil
 		}
 		run := a.runTUI
 		if run == nil {
@@ -59,11 +99,28 @@ func (a *app) tui() *cobra.Command {
 		}
 		options := tui.Options{
 			Settings: settings, Generate: generate,
-			LoadUsage: usageLoader(filepath.Dir(config.Path)),
+			LoadUsage:  usageLoader(filepath.Dir(config.Path)),
+			LoadConfig: loadConfig,
+			SaveConfig: saveConfig,
 		}
 		return run(cmd.Context(), options, a.stdin, a.stdout)
 	}
 	return command("tui", "Open the interactive Generate terminal interface", nil, exactly(0), runCommand)
+}
+
+func configSnapshot(c core.Config, s core.Settings, explicit bool) tui.ConfigSnapshot {
+	stored := map[string]string{}
+	if c.Stored != nil {
+		stored = maps.Clone(c.Stored)
+	}
+	return tui.ConfigSnapshot{
+		Path:      c.Path,
+		Explicit:  explicit,
+		Stored:    stored,
+		Env:       c.EnvValues(),
+		Defaults:  c.DefaultValues(),
+		Effective: s,
+	}
 }
 
 func usageLoader(configDir string) func(context.Context) (tui.UsageSnapshot, error) {

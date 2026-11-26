@@ -59,6 +59,45 @@ func (m model) contentWidth() int {
 	}
 	return m.width
 }
+func cycleChoice(current, direction string, choices []string) string {
+	if len(choices) == 0 {
+		return current
+	}
+	index := 0
+	for i, v := range choices {
+		if strings.EqualFold(v, current) {
+			index = i
+			break
+		}
+	}
+	delta := 1
+	if direction == "left" {
+		delta = -1
+	}
+	return choices[(index+delta+len(choices))%len(choices)]
+}
+
+func voiceChoices(provider, language string) []string {
+	var choices []string
+	for _, voice := range core.LocalVoices(language) {
+		name := voice.Name
+		if provider == core.ProviderGemini {
+			name = core.GeminiVoiceName(name)
+		}
+		choices = append(choices, name)
+	}
+	if len(choices) == 0 {
+		for _, voice := range core.LocalVoices("en-US") {
+			name := voice.Name
+			if provider == core.ProviderGemini {
+				name = core.GeminiVoiceName(name)
+			}
+			choices = append(choices, name)
+		}
+	}
+	return append([]string{"random"}, choices...)
+}
+
 func (m *model) cycle(direction string) bool {
 	if m.focus < 1 || m.focus > len(m.fields) {
 		return false
@@ -71,36 +110,11 @@ func (m *model) cycle(direction string) bool {
 	case "format":
 		choices = []string{core.FormatWAV, core.FormatMP3}
 	case "voice":
-		for _, voice := range core.LocalVoices(m.fields[2].input.Value()) {
-			name := voice.Name
-			if m.fields[0].input.Value() == core.ProviderGemini {
-				name = core.GeminiVoiceName(name)
-			}
-			choices = append(choices, name)
-		}
-		if len(choices) == 0 {
-			for _, voice := range core.LocalVoices("en-US") {
-				choices = append(choices, core.GeminiVoiceName(voice.Name))
-			}
-		}
+		choices = voiceChoices(m.fields[0].input.Value(), m.fields[2].input.Value())
 	default:
 		return false
 	}
-	if f.key == "voice" {
-		choices = append([]string{"random"}, choices...)
-	}
-	index := 0
-	for i, v := range choices {
-		if strings.EqualFold(v, f.input.Value()) {
-			index = i
-			break
-		}
-	}
-	delta := 1
-	if direction == "left" {
-		delta = -1
-	}
-	f.input.SetValue(choices[(index+delta+len(choices))%len(choices)])
+	f.input.SetValue(cycleChoice(f.input.Value(), direction, choices))
 	return true
 }
 func (u UsageSnapshot) tierEstimates() (paid, free core.CostSummary, unassigned int) {
@@ -289,35 +303,45 @@ func (m model) View() string {
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	header := accent.Render("ttsi") + muted.Render(" / Text-to-Speech Interface")
 	content := []string{}
-	if m.screen == "usage" {
+	switch m.screen {
+	case "usage":
 		rows := m.usageLines()
 		available := max(1, m.height-6)
 		offset := min(m.usageOffset, max(0, len(rows)-available))
 		content = append(content, rows[offset:min(len(rows), offset+available)]...)
-	} else {
+	case "config":
+		content = m.configView()
+	default:
 		content = m.generateView()
 	}
 	body := strings.Join(content, "\n")
 	if m.width >= 76 {
-		generate, usage := "  Generate  F1", "  Usage     F2"
-		if m.screen == "usage" {
+		generate, usage, cfg := "  Generate  F1", "  Usage     F2", "  Config    F3"
+		switch m.screen {
+		case "usage":
 			usage = accent.Render("› Usage     F2")
-		} else {
+		case "config":
+			cfg = accent.Render("› Config    F3")
+		default:
 			generate = accent.Render("› Generate  F1")
 		}
-		sidebar := lipgloss.NewStyle().Width(20).Render(muted.Render("WORKSPACE") + "\n\n" + generate + "\n" + usage)
+		sidebar := lipgloss.NewStyle().Width(20).Render(muted.Render("WORKSPACE") + "\n\n" + generate + "\n" + usage + "\n" + cfg)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, sidebar, " │ ", body)
 	} else {
-		header += " · F1 Generate / F2 Usage"
+		header += " · F1 Generate / F2 Usage / F3 Config"
 	}
 	status := safe(m.status)
-	footer := muted.Render("F1/F2: workspace · Tab: focus · Ctrl+G: generate" +
+	footer := muted.Render("F1/F2/F3: workspace · Tab: focus · Ctrl+G: generate" +
 		" · Ctrl+P: preview · Esc: cancel · Ctrl+Q: quit")
-	if m.screen != "usage" && m.generateLayout() != generateTiny {
-		footer = muted.Render("Tab: next · Shift+Tab: back · Esc: cancel · Ctrl+Q: quit")
-	}
-	if m.screen == "usage" {
-		footer = muted.Render("F1: Generate · R: refresh · ↑/↓ PgUp/PgDn: scroll · Ctrl+Q: quit")
+	switch m.screen {
+	case "usage":
+		footer = muted.Render("F1: Generate · F3: Config · R: refresh · ↑/↓ PgUp/PgDn: scroll · Ctrl+Q: quit")
+	case "config":
+		footer = muted.Render("Tab/↑/↓: field · ←/→: cycle · Ctrl+S: save · Ctrl+U: unset · Ctrl+R: reload · Ctrl+Q: quit")
+	default:
+		if m.generateLayout() != generateTiny {
+			footer = muted.Render("Tab: next · Shift+Tab: back · Esc: cancel · Ctrl+Q: quit")
+		}
 	}
 	// Fit terminal cells and reserve bottom status rows, prioritizing active controls.
 	lines := []string{header}

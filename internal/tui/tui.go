@@ -20,9 +20,11 @@ import (
 
 type GenerateFunc func(context.Context, map[string]string, string, core.Options) (core.Generation, error)
 type Options struct {
-	Settings  core.Settings
-	Generate  GenerateFunc
-	LoadUsage func(context.Context) (UsageSnapshot, error)
+	Settings   core.Settings
+	Generate   GenerateFunc
+	LoadUsage  func(context.Context) (UsageSnapshot, error)
+	LoadConfig LoadConfigFunc
+	SaveConfig SaveConfigFunc
 }
 
 // Run owns the program and joins cancelled work before returning to its caller.
@@ -88,6 +90,16 @@ type model struct {
 	usageLoading         bool
 	usageError           string
 	usageOffset          int
+	loadConfig           LoadConfigFunc
+	saveConfigFn         SaveConfigFunc
+	cfgSnapshot          ConfigSnapshot
+	cfgFields            []configField
+	cfgFocus             int
+	cfgLoadID, cfgSaveID uint64
+	cfgLoaded            bool
+	cfgLoading           bool
+	cfgSaving            bool
+	cfgError             string
 }
 
 func newModel(ctx context.Context, options Options) model {
@@ -118,20 +130,29 @@ func newModel(ctx context.Context, options Options) model {
 	}
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
+	snapshot := defaultConfigSnapshot(s)
 	m := model{ctx: ctx, generate: options.Generate, text: text, fields: fields,
-		screen: "generate", loadUsage: options.LoadUsage, spinner: spin,
-		width: 80, height: 30,
+		screen: "generate", loadUsage: options.LoadUsage,
+		loadConfig: options.LoadConfig, saveConfigFn: options.SaveConfig,
+		cfgSnapshot: snapshot, cfgFields: newConfigFields(snapshot),
+		spinner: spin,
+		width:   80, height: 30,
 		status: "Ready · generation starts only when you ask."}
 	m.sizeGenerate()
+	m.sizeConfig()
 	return m
 }
 
 func (m model) Init() tea.Cmd { return textarea.Blink }
-func (m *model) setFocus(next int) tea.Cmd {
+func (m *model) blurGenerateFields() {
 	m.text.Blur()
 	for i := range m.fields {
 		m.fields[i].input.Blur()
 	}
+}
+
+func (m *model) setFocus(next int) tea.Cmd {
+	m.blurGenerateFields()
 	m.focus = (next + len(m.fields) + 3) % (len(m.fields) + 3)
 	if m.focus == 0 {
 		return m.text.Focus()
@@ -156,10 +177,50 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.usageOffset = min(m.usageOffset, m.maxUsageOffset())
 		}
 		return m, nil
+	case configLoadedMsg:
+		if msg.id != m.cfgLoadID {
+			return m, nil
+		}
+		m.cfgLoading = false
+		if msg.err != nil {
+			m.cfgError = msg.err.Error()
+			if !m.busy {
+				m.status = "Config load error: " + msg.err.Error()
+			}
+		} else {
+			m.applyConfigSnapshot(msg.snapshot)
+			m.cfgLoaded = true
+			m.cfgError = ""
+			if !m.busy && m.screen == "config" {
+				m.status = "Loaded configuration · " + safe(msg.snapshot.Path)
+			}
+		}
+		return m, nil
+	case configSavedMsg:
+		if msg.id != m.cfgSaveID {
+			return m, nil
+		}
+		m.cfgSaving = false
+		if msg.err != nil {
+			m.cfgError = msg.err.Error()
+			if !m.busy {
+				m.status = "Error: " + msg.err.Error()
+			}
+		} else {
+			m.applyConfigSnapshot(msg.snapshot)
+			m.applySettingsToGenerate(msg.snapshot.Effective)
+			m.cfgLoaded = true
+			m.cfgError = ""
+			if !m.busy {
+				m.status = "Saved configuration · " + safe(msg.snapshot.Path)
+			}
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.usageOffset = min(m.usageOffset, m.maxUsageOffset())
 		m.sizeGenerate()
+		m.sizeConfig()
 		return m, nil
 	case resultMsg:
 		if msg.id != m.job {
@@ -226,27 +287,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "f1":
 			m.screen = "generate"
-			return m, nil
+			m.blurConfigFields()
+			return m, m.setFocus(m.focus)
 		case "f2":
 			m.screen = "usage"
+			m.blurGenerateFields()
+			m.blurConfigFields()
 			return m, m.refreshUsage()
+		case "f3":
+			m.screen = "config"
+			m.blurGenerateFields()
+			focusCmd := m.setConfigFocus(m.cfgFocus)
+			if !m.cfgLoaded || !m.configDirty() {
+				return m, tea.Batch(focusCmd, m.refreshConfig())
+			}
+			return m, focusCmd
 		case "ctrl+r":
+			if m.screen == "config" {
+				return m, m.refreshConfig()
+			}
 			return m, m.refreshUsage()
+		case "ctrl+s":
+			if m.screen != "config" {
+				return m, nil
+			}
+			return m.saveConfig()
+		case "ctrl+u":
+			if m.screen != "config" {
+				return m, nil
+			}
+			m.unsetFocusedConfigField()
+			return m, nil
 		case "ctrl+p":
 			if m.screen != "generate" {
 				return m, nil
 			}
 			return m.submitPreview(true)
 		case "tab":
+			if m.screen == "config" {
+				return m, m.setConfigFocus(m.cfgFocus + 1)
+			}
 			if m.screen != "generate" {
 				return m, nil
 			}
 			return m, m.setFocus(m.focus + 1)
 		case "shift+tab":
+			if m.screen == "config" {
+				return m, m.setConfigFocus(m.cfgFocus - 1)
+			}
 			if m.screen != "generate" {
 				return m, nil
 			}
 			return m, m.setFocus(m.focus - 1)
+		case "down":
+			if m.screen == "config" {
+				return m, m.setConfigFocus(m.cfgFocus + 1)
+			}
+		case "up":
+			if m.screen == "config" {
+				return m, m.setConfigFocus(m.cfgFocus - 1)
+			}
 		case "ctrl+g":
 			if m.screen != "generate" {
 				return m, nil
@@ -256,7 +356,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == "generate" && m.cycle(msg.String()) {
 				return m, nil
 			}
+			if m.screen == "config" && m.cycleConfig(msg.String()) {
+				return m, nil
+			}
 		case "enter":
+			if m.screen == "config" {
+				if m.cfgFocus == len(m.cfgFields) {
+					return m.saveConfig()
+				}
+				if m.cfgFocus == len(m.cfgFields)+1 {
+					return m, m.refreshConfig()
+				}
+				return m, nil
+			}
 			if m.screen != "generate" {
 				return m, nil
 			}
@@ -270,8 +382,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	if m.screen == "usage" {
-		if m.busy {
+		if m.busy || m.cfgLoading || m.cfgSaving {
 			m.spinner, cmd = m.spinner.Update(msg)
+		}
+		return m, cmd
+	}
+	if m.screen == "config" {
+		if m.cfgFocus >= 0 && m.cfgFocus < len(m.cfgFields) {
+			prev := m.cfgFields[m.cfgFocus].input.Value()
+			m.cfgFields[m.cfgFocus].input, cmd = m.cfgFields[m.cfgFocus].input.Update(msg)
+			if m.cfgFields[m.cfgFocus].input.Value() != prev {
+				m.cfgFields[m.cfgFocus].pendingUnset = false
+			}
+		}
+		if m.busy || m.cfgLoading || m.cfgSaving {
+			var tick tea.Cmd
+			m.spinner, tick = m.spinner.Update(msg)
+			cmd = tea.Batch(cmd, tick)
 		}
 		return m, cmd
 	}
@@ -280,7 +407,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	} else if m.focus <= len(m.fields) {
 		m.fields[m.focus-1].input, cmd = m.fields[m.focus-1].input.Update(msg)
 	}
-	if m.busy {
+	if m.busy || m.cfgLoading || m.cfgSaving {
 		var tick tea.Cmd
 		m.spinner, tick = m.spinner.Update(msg)
 		cmd = tea.Batch(cmd, tick)

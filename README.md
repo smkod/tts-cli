@@ -154,15 +154,21 @@ and LLM sampling parameters (`temperature`, `seed`, `systemInstruction`) are not
 
 ## Interactive terminal interface
 
-Run `ttsi tui` in an interactive terminal to open the workspace with Generate
-and Usage views. Use
+Run `ttsi tui` in an interactive terminal to open the workspace with Generate,
+Usage, and Config views. Use
 `ttsi tui --config PATH` or `TTS_CONFIG` to select the same YAML configuration
 as other commands; environment settings override YAML defaults. Editing the
-form affects only the current session and does not save configuration.
+Generate form affects only the current session and does not save configuration,
+while the Config view inspects and updates the shared YAML file via the same
+validation and locking path as `ttsi config set` and `ttsi config unset`.
 
-F1 opens Generate; F2 opens Usage. Ctrl+P previews without provider calls or file
-writes. Ctrl+R refreshes local usage; in Usage, `r` also refreshes, while arrow
-keys and Page Up / Page Down scroll the report.
+F1 opens Generate; F2 opens Usage; F3 opens Config. Ctrl+P previews without
+provider calls or file writes. Ctrl+R refreshes local usage (or reloads config
+from disk in Config); in Usage, `r` also refreshes, while arrow keys and Page Up
+/ Page Down scroll the report. In Config, Tab / Shift+Tab or Up / Down moves
+between settings, Left / Right cycles supported choices, Ctrl+U marks the
+focused field to be unset, and Ctrl+S saves changes to YAML (syncing untouched
+Generate defaults).
 Tab / Shift+Tab moves between fields. Ctrl+G generates from any field, or press
 Enter on Generate. Esc cancels an active generation. Ctrl+Q or Ctrl+C quits,
 canceling and waiting for any active generation before closing the backend.

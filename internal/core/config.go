@@ -56,6 +56,22 @@ type Config struct {
 	env      map[string]string
 }
 
+// EnvValues returns a copy of environment overrides loaded for this configuration.
+func (c Config) EnvValues() map[string]string {
+	if c.env == nil {
+		return map[string]string{}
+	}
+	return maps.Clone(c.env)
+}
+
+// DefaultValues returns a copy of built-in defaults for this configuration.
+func (c Config) DefaultValues() map[string]string {
+	if c.defaults == nil {
+		return map[string]string{}
+	}
+	return maps.Clone(c.defaults)
+}
+
 func ConfigPath(flag string) (string, bool, error) {
 	if flag != "" {
 		p, e := filepath.Abs(flag)

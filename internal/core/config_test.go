@@ -140,3 +140,24 @@ func TestInteractiveStyleClearingDoesNotMutateConfiguration(t *testing.T) {
 		t.Fatal("ordinary explicit blank style must remain invalid")
 	}
 }
+
+func TestConfigEnvAndDefaultValuesReturnClones(t *testing.T) {
+	c := Config{
+		defaults: map[string]string{"format": FormatMP3},
+		env:      map[string]string{"provider": ProviderGemini},
+	}
+	envs := c.EnvValues()
+	defs := c.DefaultValues()
+	if envs["provider"] != ProviderGemini || defs["format"] != FormatMP3 {
+		t.Fatalf("unexpected values: env=%v defaults=%v", envs, defs)
+	}
+	envs["provider"] = "mutated"
+	defs["format"] = "mutated"
+	if c.EnvValues()["provider"] != ProviderGemini || c.DefaultValues()["format"] != FormatMP3 {
+		t.Fatal("mutating returned maps changed Config")
+	}
+	var empty Config
+	if len(empty.EnvValues()) != 0 || len(empty.DefaultValues()) != 0 {
+		t.Fatal("zero Config should return empty maps")
+	}
+}

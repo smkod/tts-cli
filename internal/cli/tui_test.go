@@ -229,3 +229,58 @@ func TestUsageLoaderErrorsAreLocalAndDoNotPreventGenerate(t *testing.T) {
 		t.Fatalf("usage loader killed form: %d %v %s", code, called, out.String())
 	}
 }
+
+func TestTUIConfigCallbacksEditAndRefreshSharedSettings(t *testing.T) {
+	dir := workspace(t)
+	cfgPath := filepath.Join(dir, "config.yaml")
+	t.Setenv("TTS_FORMAT", core.FormatWAV)
+	var out bytes.Buffer
+	called := false
+	a := &app{
+		backend: &mockBackend{}, stdin: strings.NewReader(""), stdout: &out, stderr: &out,
+		terminal: func(any) bool { return true },
+		runTUI: func(ctx context.Context, options tui.Options, _ io.Reader, _ io.Writer) error {
+			called = true
+			if options.LoadConfig == nil || options.SaveConfig == nil {
+				t.Fatal("missing config callbacks")
+			}
+			snap, err := options.LoadConfig(ctx)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if snap.Path != cfgPath || snap.Env["format"] != core.FormatWAV || snap.Effective.Format != core.FormatWAV {
+				t.Fatalf("unexpected initial snapshot: %+v", snap)
+			}
+			updated, err := options.SaveConfig(ctx, map[string]string{
+				"provider": core.ProviderGemini,
+				"language": "it-IT",
+				"voice":    "kore",
+			}, nil)
+			if err != nil {
+				t.Fatalf("SaveConfig: %v", err)
+			}
+			if updated.Stored["provider"] != core.ProviderGemini || updated.Effective.Provider != core.ProviderGemini || updated.Effective.Language != "it-IT" {
+				t.Fatalf("unexpected updated snapshot: %+v", updated)
+			}
+			// Subsequent generation must pick up the newly saved configuration.
+			gen, err := options.Generate(ctx, nil, "Ciao", core.Options{DryRun: true})
+			if err != nil || gen.Provider != core.ProviderGemini || gen.Language != "it-IT" || gen.Format != core.FormatWAV {
+				t.Fatalf("Generate did not use saved config: %+v, %v", gen, err)
+			}
+			if _, err := options.SaveConfig(ctx, map[string]string{"jobs": "99"}, nil); err == nil || core.Public(err).Code != "INVALID_CONFIG" {
+				t.Fatalf("expected INVALID_CONFIG on bad jobs, got %v", err)
+			}
+			unsetSnap, err := options.SaveConfig(ctx, nil, []string{"language"})
+			if err != nil {
+				t.Fatalf("SaveConfig unset: %v", err)
+			}
+			if _, ok := unsetSnap.Stored["language"]; ok {
+				t.Fatalf("language remained in stored YAML: %+v", unsetSnap.Stored)
+			}
+			return nil
+		},
+	}
+	if code := a.run(context.Background(), []string{"--config", cfgPath, "tui"}); code != 0 || !called {
+		t.Fatalf("TUI config callbacks failed: %d %v %s", code, called, out.String())
+	}
+}
