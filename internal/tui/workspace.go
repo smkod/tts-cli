@@ -5,7 +5,6 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -182,8 +181,6 @@ func (m model) usageLines() []string {
 func (m model) View() string {
 	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	border := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("238"))
-	width := max(1, m.contentWidth()-2)
 	header := accent.Render("ttsi") + muted.Render(" / Text-to-Speech Interface")
 	content := []string{}
 	if m.screen == "usage" {
@@ -192,56 +189,7 @@ func (m model) View() string {
 		offset := min(m.usageOffset, max(0, len(rows)-available))
 		content = append(content, rows[offset:min(len(rows), offset+available)]...)
 	} else {
-		content = append(content, accent.Render("Generate audio"))
-		fields := []string{muted.Render("SETTINGS · Tab to edit · ←/→ choices")}
-		if m.height < 30 {
-			fields = append(
-				fields,
-				safe(m.fields[0].input.Value())+" · "+safe(m.fields[3].input.Value())+" · "+safe(m.fields[6].input.Value()),
-			)
-		}
-		for i, f := range m.fields {
-			if m.height < 30 && m.focus != i+1 {
-				continue
-			}
-			label := f.label
-			if m.focus == i+1 {
-				label = accent.Render("› " + label)
-			}
-			fields = append(fields, label+": "+f.input.View())
-		}
-		editor := fmt.Sprintf(
-			"TEXT · %d characters / %d bytes",
-			utf8.RuneCountInString(m.text.Value()),
-			len(m.text.Value()),
-		) + "\n" + m.text.View()
-		content = append(
-			content,
-			border.Width(max(1, width-2)).Render(strings.Join(fields, "\n")),
-			border.Width(max(1, width-2)).Render(editor),
-		)
-		generate, preview := "[ Generate  Ctrl+G ]", "[ Preview  Ctrl+P ]"
-		if m.focus == len(m.fields)+1 {
-			generate = accent.Render(generate)
-		}
-		if m.focus == len(m.fields)+2 {
-			preview = accent.Render(preview)
-		}
-		if m.busy {
-			generate = m.spinner.View() + " Working…"
-		}
-		content = append(content, generate+"  "+preview, muted.Render("Preview request (no API call)"))
-	}
-	if m.height < 14 && m.screen != "usage" {
-		active := m.text.View()
-		if m.focus > 0 && m.focus <= len(m.fields) {
-			f := m.fields[m.focus-1]
-			active = f.label + ": " + f.input.View()
-		}
-		if m.focus > len(m.fields) {
-			active = "Generate Ctrl+G · Preview Ctrl+P"
-		}
-		content = []string{accent.Render("Generate audio"), active}
+		content = m.generateView()
 	}
 	body := strings.Join(content, "\n")
 	if m.width >= 76 {
@@ -259,6 +207,9 @@ func (m model) View() string {
 	status := safe(m.status)
 	footer := muted.Render("F1/F2: workspace · Tab: focus · Ctrl+G: generate" +
 		" · Ctrl+P: preview · Esc: cancel · Ctrl+Q: quit")
+	if m.screen != "usage" && m.generateLayout() != generateTiny {
+		footer = muted.Render("Tab: next · Shift+Tab: back · Esc: cancel · Ctrl+Q: quit")
+	}
 	if m.screen == "usage" {
 		footer = muted.Render("F1: Generate · R/Ctrl+R: refresh · ↑/↓: scroll · Ctrl+Q: quit")
 	}

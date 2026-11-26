@@ -101,23 +101,29 @@ func newModel(ctx context.Context, options Options) model {
 	values := []struct{ key, label, value string }{
 		{"provider", "Provider", s.Provider}, {"model", "Model", s.Model},
 		{"language", "Language", s.Language}, {"voice", "Voice", s.Voice},
-		{"style", "Style", s.Style}, {"output", "Output file (optional)", ""},
+		{"style", "Style", s.Style}, {"output", "Output file", ""},
 		{"format", "Format", s.Format}, {"bitrate", "MP3 bitrate", strconv.Itoa(s.Bitrate)},
 		{"key_tier", "Key tier", s.KeyTier},
 	}
 	fields := make([]field, 0, len(values))
 	for _, v := range values {
 		input := textinput.New()
+		input.Prompt = ""
+		if v.key == "output" {
+			input.Placeholder = "Optional"
+		}
 		input.SetValue(v.value)
 		input.CharLimit = 0
 		fields = append(fields, field{key: v.key, label: v.label, initial: v.value, input: input})
 	}
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
-	return model{ctx: ctx, generate: options.Generate, text: text, fields: fields,
+	m := model{ctx: ctx, generate: options.Generate, text: text, fields: fields,
 		screen: "generate", loadUsage: options.LoadUsage, spinner: spin,
 		width: 80, height: 30,
 		status: "Ready · generation starts only when you ask."}
+	m.sizeGenerate()
+	return m
 }
 
 func (m model) Init() tea.Cmd { return textarea.Blink }
@@ -153,11 +159,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.usageOffset = min(m.usageOffset, m.maxUsageOffset())
-		m.text.SetWidth(max(1, m.contentWidth()-6))
-		m.text.SetHeight(max(2, min(5, msg.Height-10)))
-		for i := range m.fields {
-			m.fields[i].input.Width = max(1, m.contentWidth()-20)
-		}
+		m.sizeGenerate()
 		return m, nil
 	case resultMsg:
 		if msg.id != m.job {
