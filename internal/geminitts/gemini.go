@@ -147,7 +147,7 @@ func (g *Gemini) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 	if model == "" {
 		model = core.DefaultGeminiModel
 	}
-	voiceName := extractVoiceName(r.Voice)
+	voiceName := core.GeminiVoiceName(r.Voice)
 	statePath := StatePath(r.ConfigDir, r.CacheDir)
 	pool := g.pool()
 	tried := map[string]bool{}
@@ -337,16 +337,6 @@ func containsFold(items []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func extractVoiceName(voice string) string {
-	if v, ok := core.ParseVoice(voice); ok {
-		if len(v.Alias) == 0 {
-			return voice
-		}
-		return strings.ToUpper(v.Alias[:1]) + v.Alias[1:]
-	}
-	return voice
 }
 
 func ensureWAV(data []byte, mimeType string) []byte {

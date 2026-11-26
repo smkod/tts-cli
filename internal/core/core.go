@@ -163,6 +163,15 @@ func canonicalLocale(s string) string {
 	}
 	return strings.Join(parts, "-")
 }
+
+// GeminiVoiceName returns the short prebuilt voice name for Gemini TTS (e.g. "Kore").
+func GeminiVoiceName(voice string) string {
+	if v, ok := ParseVoice(voice); ok && len(v.Alias) > 0 {
+		return strings.ToUpper(v.Alias[:1]) + v.Alias[1:]
+	}
+	return voice
+}
+
 func invalidVoice() *Problem {
 	return Fail("INVALID_VOICE", "Unknown Chirp 3 HD voice or locale. Check the voice list for supported aliases.", false)
 }
@@ -256,6 +265,9 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 		}
 		v := voices[rand.IntN(len(voices))]
 		s.Language, s.Voice = v.Language, v.Name
+		if s.Provider == ProviderGemini {
+			s.Voice = GeminiVoiceName(v.Name)
+		}
 	}
 	r := Request{
 		Text: text, Provider: s.Provider, Model: s.Model, KeyTier: s.KeyTier,

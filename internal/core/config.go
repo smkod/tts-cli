@@ -208,11 +208,15 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		return s, nil
 	}
 	lang, voice, err := ResolveVoice(s.Language, s.Voice)
-	if err != nil && s.Provider == ProviderGemini {
-		if strings.TrimSpace(s.Language) == "" {
-			s.Language = "en-US"
+	if s.Provider == ProviderGemini {
+		if err != nil {
+			if strings.TrimSpace(s.Language) == "" {
+				s.Language = "en-US"
+			}
+			s.Voice = strings.TrimSpace(s.Voice)
+			return s, nil
 		}
-		s.Voice = strings.TrimSpace(s.Voice)
+		s.Language, s.Voice = lang, GeminiVoiceName(voice)
 		return s, nil
 	}
 	s.Language, s.Voice = lang, voice
