@@ -17,6 +17,7 @@ const (
 
 	ProviderGoogle          = "google"
 	ProviderGemini          = "gemini"
+	LanguageAuto            = "auto"
 	DefaultGeminiModel      = "gemini-3.8-flash-tts"
 	GeminiFlashLiteTTSModel = "gemini-3.8-flash-lite-tts"
 	KeyTierAuto             = "auto"
@@ -25,20 +26,22 @@ const (
 )
 
 type Settings struct {
-	Bitrate   int    `json:"bitrate" yaml:"bitrate"`
-	Format    string `json:"format" yaml:"format"`
-	Provider  string `json:"provider" yaml:"provider"`
-	Model     string `json:"model,omitempty" yaml:"model,omitempty"`
-	KeyTier   string `json:"key_tier,omitempty" yaml:"key_tier,omitempty"`
-	Language  string `json:"language" yaml:"language"`
-	Voice     string `json:"voice" yaml:"voice"`
-	OutputDir string `json:"output_dir" yaml:"output_dir"`
-	CacheDir  string `json:"cache_dir" yaml:"cache_dir"`
-	ConfigDir string `json:"-" yaml:"-"`
-	Jobs      int    `json:"jobs" yaml:"jobs"`
+	Bitrate        int    `json:"bitrate" yaml:"bitrate"`
+	Format         string `json:"format" yaml:"format"`
+	Provider       string `json:"provider" yaml:"provider"`
+	Model          string `json:"model,omitempty" yaml:"model,omitempty"`
+	KeyTier        string `json:"key_tier,omitempty" yaml:"key_tier,omitempty"`
+	Language       string `json:"language" yaml:"language"`
+	LanguagePinned bool   `json:"-" yaml:"-"`
+	Voice          string `json:"voice" yaml:"voice"`
+	Style          string `json:"style,omitempty" yaml:"style,omitempty"`
+	OutputDir      string `json:"output_dir" yaml:"output_dir"`
+	CacheDir       string `json:"cache_dir" yaml:"cache_dir"`
+	ConfigDir      string `json:"-" yaml:"-"`
+	Jobs           int    `json:"jobs" yaml:"jobs"`
 }
 
-var Keys = []string{"provider", "model", "key_tier", "language", "voice", "format", "output_dir", "cache_dir", "jobs", "bitrate"}
+var Keys = []string{"provider", "model", "key_tier", "language", "voice", "style", "format", "output_dir", "cache_dir", "jobs", "bitrate"}
 
 // ValidGeminiModel reports whether m is a supported Gemini 3.8 TTS model ID.
 func ValidGeminiModel(m string) bool {
@@ -143,6 +146,7 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		KeyTier:   strings.ToLower(strings.TrimSpace(get("key_tier"))),
 		Language:  get("language"),
 		Voice:     get("voice"),
+		Style:     strings.TrimSpace(get("style")),
 		OutputDir: get("output_dir"),
 		CacheDir:  get("cache_dir"),
 	}
@@ -170,16 +174,37 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		}
 	} else {
 		s.Model = ""
+		if s.Style != "" {
+			return s, Fail("INVALID_CONFIG", "Style direction is only supported with the gemini provider.", false)
+		}
 	}
-	for _, k := range []string{"language", "voice"} {
+	for _, k := range []string{"language", "voice", "style"} {
 		for _, m := range layers {
 			if v, ok := m[k]; ok {
 				if strings.TrimSpace(v) == "" {
+					if k == "style" {
+						return s, Fail("INVALID_CONFIG", "Style must not be blank.", false)
+					}
 					return s, Fail("INVALID_CONFIG", "Language and voice must not be blank.", false)
 				}
 				break
 			}
 		}
+	}
+	langExplicit := false
+	for _, m := range layers {
+		if _, ok := m["language"]; ok {
+			// Defaults map does not define language, so any hit comes from flags, item, env, or YAML.
+			langExplicit = true
+			break
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(s.Language), LanguageAuto) {
+		if s.Provider != ProviderGemini {
+			return s, Fail("INVALID_CONFIG", "Automatic language detection (auto) is only supported with the gemini provider.", false)
+		}
+		s.Language = LanguageAuto
+		s.LanguagePinned = false
 	}
 	jobs, err := strconv.Atoi(get("jobs"))
 	if err != nil || jobs < 1 || jobs > 16 {
@@ -200,11 +225,28 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		return s, Fail("INVALID_CONFIG", "Invalid cache directory.", false)
 	}
 	if strings.EqualFold(s.Voice, "random") {
+		if s.Language == LanguageAuto {
+			s.Voice = "random"
+			return s, nil
+		}
 		voices := randomVoiceCandidates(s.Language)
 		if len(voices) == 0 {
 			return s, invalidVoice()
 		}
 		s.Language, s.Voice = voices[0].Language, "random"
+		s.LanguagePinned = langExplicit
+		return s, nil
+	}
+	if s.Language == LanguageAuto {
+		lang, voice, resolveErr := ResolveVoice("", s.Voice)
+		if resolveErr == nil {
+			s.Voice = GeminiVoiceName(voice)
+			if strings.Contains(strings.ToLower(s.Voice), "-chirp3-hd-") {
+				s.Language = lang
+			}
+			return s, nil
+		}
+		s.Voice = strings.TrimSpace(s.Voice)
 		return s, nil
 	}
 	lang, voice, err := ResolveVoice(s.Language, s.Voice)
@@ -212,14 +254,23 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		if err != nil {
 			if strings.TrimSpace(s.Language) == "" {
 				s.Language = "en-US"
+			} else {
+				lower := strings.ToLower(strings.TrimSpace(s.Language))
+				if !validLocale(lower) {
+					return s, Fail("INVALID_CONFIG", "Language must be a valid BCP-47 locale or auto.", false)
+				}
+				s.Language = canonicalLocale(lower)
+				s.LanguagePinned = langExplicit
 			}
 			s.Voice = strings.TrimSpace(s.Voice)
 			return s, nil
 		}
 		s.Language, s.Voice = lang, GeminiVoiceName(voice)
+		s.LanguagePinned = langExplicit || strings.Contains(strings.ToLower(get("voice")), "-chirp3-hd-")
 		return s, nil
 	}
 	s.Language, s.Voice = lang, voice
+	s.LanguagePinned = langExplicit || strings.Contains(strings.ToLower(get("voice")), "-chirp3-hd-")
 	return s, err
 }
 

@@ -1,12 +1,12 @@
 ---
 name: tts-cli
-description: Use the ttsi executable to discover Google Chirp 3 HD voices and generate or recover single and batch WAV or MP3 outputs. Use for general audio workflows and optional Anki pronunciation audio via AnkiConnect.
+description: Use the ttsi executable to discover Google Chirp 3 HD and Gemini 3.8 TTS voices, styles, and inline vocal modifiers, and generate or recover single, script, and batch WAV or MP3 outputs. Use for general audio workflows and optional Anki pronunciation audio via AnkiConnect.
 ---
 
 # Generate audio with ttsi
 
-- Install with `go install github.com/smkod/tts-cli/cmd/ttsi@<release>` once a release is available, or `go install ./cmd/ttsi` from a checkout. Use Go 1.26 or later. Enable Google Cloud Text-to-Speech and configure Application Default Credentials. Do not put secrets in the YAML file.
-- Before using the CLI, run `ttsi agent-guide` (or `ttsi agent-guide --json` and read `data.instructions`). Follow the bundled guide for discovery, generation, batch recovery and safety; it matches the installed executable and needs no external documentation.
+- Install with `go install github.com/smkod/tts-cli/cmd/ttsi@<release>` once a release is available, or `go install ./cmd/ttsi` from a checkout. Use Go 1.26 or later. Enable Google Cloud Text-to-Speech (ADC) for `google`, or configure Gemini API keys (`ttsi keys add` / `GEMINI_API_KEY`) for `gemini`. Do not put secrets in the YAML file.
+- Before using the CLI, run `ttsi agent-guide` (or `ttsi agent-guide --json` and read `data.instructions`). Run `ttsi modifiers list --json` to inspect supported Gemini 3.8 `<...>` inline tags and Chirp 3 HD `[pause]` markup before generating expressive speech.
 - Use `--json` for operational commands and read the returned absolute file paths rather than guessing them. Only pass successful, non-preview audio files to downstream tools.
 
 ## Optional AnkiConnect workflow

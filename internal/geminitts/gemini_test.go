@@ -234,3 +234,110 @@ func TestKeyPoolResetAndMasking(t *testing.T) {
 		t.Fatal("expected key to be available after reset")
 	}
 }
+
+func TestStyleMultiSpeakerAndLanguagePinningPayload(t *testing.T) {
+	clearKeyEnv(t)
+	t.Setenv("GEMINI_API_KEY", "AIza-env-key-1234")
+
+	var got generateContentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("bad request JSON: %v", err)
+		}
+		resp := map[string]any{
+			"candidates": []any{
+				map[string]any{
+					"content": map[string]any{
+						"parts": []any{
+							map[string]any{
+								"inlineData": map[string]any{
+									"mimeType": "audio/wav",
+									"data":     base64.StdEncoding.EncodeToString(testWAV()),
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	g := &Gemini{BaseURL: srv.URL, HTTPClient: srv.Client(), Pool: NewKeyPool()}
+	_, err := g.Synthesize(context.Background(), core.Request{
+		Provider:       core.ProviderGemini,
+		Model:          core.DefaultGeminiModel,
+		Language:       "es-MX",
+		LanguagePinned: true,
+		Format:         core.FormatWAV,
+		Speakers:       map[string]string{"Host": "Puck", "Guest": "Kore"},
+		Turns: []core.Turn{
+			{Speaker: "Host", Style: "cheerful", Text: "Hola <short pause>"},
+			{Speaker: "Guest", Style: "nervous", Text: "<sigh> Que pasa?"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Synthesize failed: %v", err)
+	}
+	if got.GenerationConfig.SpeechConfig.LanguageCode != "es-MX" {
+		t.Fatalf("expected languageCode es-MX, got %q", got.GenerationConfig.SpeechConfig.LanguageCode)
+	}
+	if got.GenerationConfig.SpeechConfig.VoiceConfig != nil || got.GenerationConfig.SpeechConfig.MultiSpeakerVoiceConfig == nil {
+		t.Fatalf("expected multiSpeakerVoiceConfig only, got %+v", got.GenerationConfig.SpeechConfig)
+	}
+	if len(got.Contents) != 1 || len(got.Contents[0].Parts) != 2 {
+		t.Fatalf("unexpected contents: %+v", got.Contents)
+	}
+	if got.Contents[0].Parts[0].SpeechMetadata == nil || got.Contents[0].Parts[0].SpeechMetadata.Style != "cheerful" || got.Contents[0].Parts[0].SpeechMetadata.Speaker != "Host" {
+		t.Fatalf("unexpected part 0 metadata: %+v", got.Contents[0].Parts[0])
+	}
+}
+
+func TestDesignVoice(t *testing.T) {
+	clearKeyEnv(t)
+	t.Setenv("GEMINI_API_KEY", "AIza-env-key-1234")
+
+	var got createVoiceRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/voices" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("bad JSON: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":           "voice_abc123",
+			"name":         "voices/voice_abc123",
+			"displayName":  "Narrator",
+			"model":        "gemini-3.8-flash-tts",
+			"languageCode": "en-US",
+			"gender":       "MALE",
+			"expireTime":   "2027-09-24T11:36:00Z",
+			"sampleAudio": map[string]any{
+				"mimeType": "audio/wav",
+				"data":     base64.StdEncoding.EncodeToString(testWAV()),
+			},
+		})
+	}))
+	defer srv.Close()
+
+	g := &Gemini{BaseURL: srv.URL, HTTPClient: srv.Client(), Pool: NewKeyPool()}
+	res, err := g.DesignVoice(context.Background(), core.VoiceDesignRequest{
+		Prompt:       "Warm narrator",
+		DisplayName:  "Narrator",
+		Gender:       "male",
+		LanguageCode: "en-US",
+		Model:        core.DefaultGeminiModel,
+		Format:       core.FormatWAV,
+	})
+	if err != nil {
+		t.Fatalf("DesignVoice failed: %v", err)
+	}
+	if !got.Store || got.Voice.Type != "prompted" || got.Voice.Prompted.Input != "Warm narrator" || got.Voice.Gender != "MALE" {
+		t.Fatalf("unexpected request payload: %+v", got)
+	}
+	if res.ID != "voice_abc123" || len(res.SampleAudio) == 0 {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}

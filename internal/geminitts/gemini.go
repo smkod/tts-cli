@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,11 +67,18 @@ type generateContentRequest struct {
 }
 
 type requestContent struct {
+	Role  string        `json:"role,omitempty"`
 	Parts []requestPart `json:"parts"`
 }
 
 type requestPart struct {
-	Text string `json:"text"`
+	Text           string                 `json:"text"`
+	SpeechMetadata *requestSpeechMetadata `json:"speechMetadata,omitempty"`
+}
+
+type requestSpeechMetadata struct {
+	Style   string `json:"style,omitempty"`
+	Speaker string `json:"speaker,omitempty"`
 }
 
 type requestGenerationConfig struct {
@@ -79,6 +87,17 @@ type requestGenerationConfig struct {
 }
 
 type requestSpeechConfig struct {
+	LanguageCode            string                          `json:"languageCode,omitempty"`
+	VoiceConfig             *requestVoiceConfig             `json:"voiceConfig,omitempty"`
+	MultiSpeakerVoiceConfig *requestMultiSpeakerVoiceConfig `json:"multiSpeakerVoiceConfig,omitempty"`
+}
+
+type requestMultiSpeakerVoiceConfig struct {
+	SpeakerVoiceConfigs []requestSpeakerVoiceConfig `json:"speakerVoiceConfigs"`
+}
+
+type requestSpeakerVoiceConfig struct {
+	Speaker     string             `json:"speaker"`
 	VoiceConfig requestVoiceConfig `json:"voiceConfig"`
 }
 
@@ -88,6 +107,38 @@ type requestVoiceConfig struct {
 
 type requestPrebuiltVoice struct {
 	VoiceName string `json:"voiceName"`
+}
+
+type createVoiceRequest struct {
+	Store bool               `json:"store"`
+	Voice createVoicePayload `json:"voice"`
+}
+
+type createVoicePayload struct {
+	Model        string              `json:"model"`
+	Type         string              `json:"type"`
+	DisplayName  string              `json:"displayName,omitempty"`
+	Gender       string              `json:"gender,omitempty"`
+	LanguageCode string              `json:"languageCode,omitempty"`
+	Prompted     createVoicePrompted `json:"prompted"`
+}
+
+type createVoicePrompted struct {
+	Input string `json:"input"`
+}
+
+type createVoiceResponse struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"displayName"`
+	Model        string `json:"model"`
+	LanguageCode string `json:"languageCode"`
+	Gender       string `json:"gender"`
+	ExpireTime   string `json:"expireTime"`
+	SampleAudio  *struct {
+		MimeType string `json:"mimeType"`
+		Data     string `json:"data"`
+	} `json:"sampleAudio"`
 }
 
 type generateContentResponse struct {
@@ -127,28 +178,125 @@ func (g *Gemini) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		}
 	}
 
-	keys, err := LoadKeys(r.ConfigDir)
-	if err != nil {
-		return nil, err
-	}
-	if len(keys) == 0 {
-		return nil, core.Fail("AUTH_SETUP", "No Gemini API keys configured. Run ttsi keys add --tier free <KEY> or set GEMINI_API_KEY.", false)
-	}
-
-	tier := r.KeyTier
-	if tier == "" {
-		tier = core.KeyTierAuto
-	}
-	if len(filterAndOrderKeys(keys, tier)) == 0 {
-		return nil, core.Fail("AUTH_SETUP", fmt.Sprintf("No Gemini API keys configured for tier %q.", tier), false)
-	}
-
 	model := r.Model
 	if model == "" {
 		model = core.DefaultGeminiModel
 	}
-	voiceName := core.GeminiVoiceName(r.Voice)
-	statePath := StatePath(r.ConfigDir, r.CacheDir)
+	payload := buildGenerateContentRequest(r)
+
+	var wav []byte
+	err := g.withKeyFailover(ctx, r.ConfigDir, r.CacheDir, r.KeyTier, r.Warn, func(apiKey string) (int, time.Duration, string, error) {
+		var status int
+		var retryAfter time.Duration
+		var reason string
+		var reqErr error
+		wav, status, retryAfter, reason, reqErr = g.callGenerateContent(ctx, apiKey, model, payload)
+		return status, retryAfter, reason, reqErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if r.Format == core.FormatMP3 {
+		return googletts.EncodeMP3(ctx, encoder, wav, r.Bitrate)
+	}
+	return wav, nil
+}
+
+// DesignVoice creates a reusable prompted custom voice via the Gemini Voices API.
+func (g *Gemini) DesignVoice(ctx context.Context, r core.VoiceDesignRequest) (core.VoiceDesignResult, error) {
+	var encoder string
+	if r.Format == core.FormatMP3 {
+		var err error
+		encoder, err = googletts.FindFFmpeg(ctx)
+		if err != nil {
+			return core.VoiceDesignResult{}, err
+		}
+	}
+	model := r.Model
+	if model == "" {
+		model = core.DefaultGeminiModel
+	}
+	reqBody := createVoiceRequest{
+		Store: true,
+		Voice: createVoicePayload{
+			Model:        model,
+			Type:         "prompted",
+			DisplayName:  r.DisplayName,
+			Gender:       strings.ToUpper(r.Gender),
+			LanguageCode: r.LanguageCode,
+			Prompted:     createVoicePrompted{Input: r.Prompt},
+		},
+	}
+
+	var parsed createVoiceResponse
+	err := g.withKeyFailover(ctx, r.ConfigDir, r.CacheDir, r.KeyTier, r.Warn, func(apiKey string) (int, time.Duration, string, error) {
+		var status int
+		var retryAfter time.Duration
+		var reason string
+		var reqErr error
+		parsed, status, retryAfter, reason, reqErr = g.callCreateVoice(ctx, apiKey, reqBody)
+		return status, retryAfter, reason, reqErr
+	})
+	if err != nil {
+		return core.VoiceDesignResult{}, err
+	}
+
+	id := parsed.ID
+	if id == "" {
+		id = strings.TrimPrefix(parsed.Name, "voices/")
+	}
+	name := parsed.Name
+	if name == "" && id != "" {
+		name = "voices/" + id
+	}
+	res := core.VoiceDesignResult{
+		ID:           id,
+		Name:         name,
+		DisplayName:  parsed.DisplayName,
+		Model:        parsed.Model,
+		LanguageCode: parsed.LanguageCode,
+		Gender:       strings.ToLower(parsed.Gender),
+		ExpireTime:   parsed.ExpireTime,
+	}
+	if res.Model == "" {
+		res.Model = model
+	}
+	if parsed.SampleAudio != nil && parsed.SampleAudio.Data != "" {
+		raw, decErr := base64.StdEncoding.DecodeString(parsed.SampleAudio.Data)
+		if decErr != nil {
+			return core.VoiceDesignResult{}, core.Fail("INVALID_AUDIO", "Gemini returned invalid base64 sample audio.", false)
+		}
+		wav := ensureWAV(raw, parsed.SampleAudio.MimeType)
+		if r.Format == core.FormatMP3 {
+			encoded, encErr := googletts.EncodeMP3(ctx, encoder, wav, r.Bitrate)
+			if encErr != nil {
+				return core.VoiceDesignResult{}, encErr
+			}
+			res.SampleAudio = encoded
+		} else {
+			res.SampleAudio = wav
+		}
+	}
+	return res, nil
+}
+
+func (g *Gemini) withKeyFailover(ctx context.Context, configDir, cacheDir, tier string, warn func(string), fn func(apiKey string) (int, time.Duration, string, error)) error {
+	keys, err := LoadKeys(configDir)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		return core.Fail("AUTH_SETUP", "No Gemini API keys configured. Run ttsi keys add --tier free <KEY> or set GEMINI_API_KEY.", false)
+	}
+
+	if tier == "" {
+		tier = core.KeyTierAuto
+	}
+	if len(filterAndOrderKeys(keys, tier)) == 0 {
+		return core.Fail("AUTH_SETUP", fmt.Sprintf("No Gemini API keys configured for tier %q.", tier), false)
+	}
+
+	statePath := StatePath(configDir, cacheDir)
 	pool := g.pool()
 	tried := map[string]bool{}
 	var lastErr error
@@ -158,29 +306,26 @@ func (g *Gemini) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		entry, ok, _ := pool.Acquire(keys, tier, statePath, tried)
 		if !ok {
 			if lastErr != nil {
-				return nil, lastErr
+				return lastErr
 			}
-			return nil, core.Fail("QUOTA_EXHAUSTED", fmt.Sprintf("All Gemini API keys for tier %q are currently exhausted or in cooldown. Run ttsi keys reset or add another key.", tier), false)
+			return core.Fail("QUOTA_EXHAUSTED", fmt.Sprintf("All Gemini API keys for tier %q are currently exhausted or in cooldown. Run ttsi keys reset or add another key.", tier), false)
 		}
-		if lastFailedKey != "" && r.Warn != nil {
-			r.Warn(fmt.Sprintf("Gemini key %s hit its limit; switching to %s (%s).", lastFailedKey, entry.Name, entry.Tier))
+		if lastFailedKey != "" && warn != nil {
+			warn(fmt.Sprintf("Gemini key %s hit its limit; switching to %s (%s).", lastFailedKey, entry.Name, entry.Tier))
 		}
 		tried[entry.Key] = true
 
-		wav, status, retryAfter, reason, reqErr := g.callGenerateContent(ctx, entry.Key, model, r.Text, voiceName)
+		status, retryAfter, reason, reqErr := fn(entry.Key)
 		if reqErr == nil {
-			if r.Format == core.FormatMP3 {
-				return googletts.EncodeMP3(ctx, encoder, wav, r.Bitrate)
-			}
-			return wav, nil
+			return nil
 		}
 		if errors.Is(reqErr, context.Canceled) || ctx.Err() != nil {
-			return nil, reqErr
+			return reqErr
 		}
 
 		failover, transient, publicErr := classifyHTTPFailure(status, reason, reqErr)
 		if !failover {
-			return nil, publicErr
+			return publicErr
 		}
 
 		pool.MarkExhausted(entry.Key, retryAfter, reason, transient, statePath)
@@ -189,18 +334,75 @@ func (g *Gemini) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 	}
 }
 
-func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model, text, voiceName string) ([]byte, int, time.Duration, string, error) {
-	payload := generateContentRequest{
-		Contents: []requestContent{{Parts: []requestPart{{Text: text}}}},
+func buildGenerateContentRequest(r core.Request) generateContentRequest {
+	multiSpeaker := len(r.Speakers) > 1
+	var parts []requestPart
+	if len(r.Turns) > 0 {
+		parts = make([]requestPart, 0, len(r.Turns))
+		for _, t := range r.Turns {
+			part := requestPart{Text: t.Text}
+			speaker := t.Speaker
+			if !multiSpeaker {
+				speaker = ""
+			}
+			if t.Style != "" || speaker != "" {
+				part.SpeechMetadata = &requestSpeechMetadata{
+					Style:   t.Style,
+					Speaker: speaker,
+				}
+			}
+			parts = append(parts, part)
+		}
+	} else {
+		part := requestPart{Text: r.Text}
+		if r.Style != "" {
+			part.SpeechMetadata = &requestSpeechMetadata{Style: r.Style}
+		}
+		parts = []requestPart{part}
+	}
+
+	speechCfg := requestSpeechConfig{}
+	if r.LanguagePinned && r.Language != "" && !strings.EqualFold(r.Language, core.LanguageAuto) {
+		speechCfg.LanguageCode = r.Language
+	}
+	if multiSpeaker {
+		aliases := make([]string, 0, len(r.Speakers))
+		for alias := range r.Speakers {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		cfgs := make([]requestSpeakerVoiceConfig, 0, len(aliases))
+		for _, alias := range aliases {
+			cfgs = append(cfgs, requestSpeakerVoiceConfig{
+				Speaker: alias,
+				VoiceConfig: requestVoiceConfig{
+					PrebuiltVoiceConfig: requestPrebuiltVoice{VoiceName: core.GeminiVoiceName(r.Speakers[alias])},
+				},
+			})
+		}
+		speechCfg.MultiSpeakerVoiceConfig = &requestMultiSpeakerVoiceConfig{SpeakerVoiceConfigs: cfgs}
+	} else {
+		voiceName := core.GeminiVoiceName(r.Voice)
+		if len(r.Speakers) == 1 {
+			for _, v := range r.Speakers {
+				voiceName = core.GeminiVoiceName(v)
+			}
+		}
+		speechCfg.VoiceConfig = &requestVoiceConfig{
+			PrebuiltVoiceConfig: requestPrebuiltVoice{VoiceName: voiceName},
+		}
+	}
+
+	return generateContentRequest{
+		Contents: []requestContent{{Role: "user", Parts: parts}},
 		GenerationConfig: requestGenerationConfig{
 			ResponseModalities: []string{"AUDIO"},
-			SpeechConfig: requestSpeechConfig{
-				VoiceConfig: requestVoiceConfig{
-					PrebuiltVoiceConfig: requestPrebuiltVoice{VoiceName: voiceName},
-				},
-			},
+			SpeechConfig:       speechCfg,
 		},
 	}
+}
+
+func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model string, payload generateContentRequest) ([]byte, int, time.Duration, string, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, 0, "", err
@@ -248,6 +450,44 @@ func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model, text, v
 		}
 	}
 	return nil, resp.StatusCode, 0, "", core.Fail("INVALID_AUDIO", "Gemini response contained no audio data.", false)
+}
+
+func (g *Gemini) callCreateVoice(ctx context.Context, apiKey string, payload createVoiceRequest) (createVoiceResponse, int, time.Duration, string, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return createVoiceResponse{}, 0, 0, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.baseURL()+"/voices", bytes.NewReader(body))
+	if err != nil {
+		return createVoiceResponse{}, 0, 0, "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", apiKey)
+
+	resp, err := g.httpClient().Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return createVoiceResponse{}, 0, 0, "TIMEOUT", core.Fail("PROVIDER_TIMEOUT", "Gemini Voices API timed out.", true)
+		}
+		return createVoiceResponse{}, 0, 0, "NETWORK", core.Fail("PROVIDER_UNAVAILABLE", "Cannot reach Gemini Voices API.", true)
+	}
+	defer resp.Body.Close()
+
+	const maxResp = 32 << 20
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxResp))
+	if err != nil {
+		return createVoiceResponse{}, resp.StatusCode, 0, "READ_ERROR", core.Fail("PROVIDER_ERROR", "Failed reading Gemini Voices API response.", true)
+	}
+	if resp.StatusCode != http.StatusOK {
+		retryAfter, reason := parseErrorDetails(resp.Header.Get("Retry-After"), respBytes)
+		return createVoiceResponse{}, resp.StatusCode, retryAfter, reason, fmt.Errorf("gemini voices status %d: %s", resp.StatusCode, reason)
+	}
+
+	var parsed createVoiceResponse
+	if err := json.Unmarshal(respBytes, &parsed); err != nil {
+		return createVoiceResponse{}, resp.StatusCode, 0, "", core.Fail("PROVIDER_ERROR", "Gemini returned malformed voice design JSON.", false)
+	}
+	return parsed, resp.StatusCode, 0, "", nil
 }
 
 // ListVoices queries Gemini's v1beta/voices endpoint using available keys.

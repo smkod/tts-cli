@@ -83,3 +83,33 @@ func TestConfigRejectsUnknownAndDuplicateKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestGeminiStyleAndAutoLanguageConfig(t *testing.T) {
+	c := Config{
+		Stored:   map[string]string{"provider": ProviderGemini},
+		env:      map[string]string{},
+		defaults: map[string]string{"bitrate": "96", "format": FormatMP3, "provider": ProviderGoogle, "key_tier": KeyTierAuto, "voice": "random", "output_dir": t.TempDir(), "cache_dir": t.TempDir(), "jobs": "4"},
+	}
+
+	s, err := c.Resolve(nil, nil)
+	if err != nil || s.LanguagePinned {
+		t.Fatalf("expected unpinned default language, got %+v %v", s, err)
+	}
+
+	s, err = c.Resolve(map[string]string{"language": "it-IT", "style": "warm"}, nil)
+	if err != nil || !s.LanguagePinned || s.Language != "it-IT" || s.Style != "warm" {
+		t.Fatalf("expected pinned language and style, got %+v %v", s, err)
+	}
+
+	s, err = c.Resolve(map[string]string{"language": "auto"}, nil)
+	if err != nil || s.Language != LanguageAuto || s.LanguagePinned {
+		t.Fatalf("expected auto language without pinning, got %+v %v", s, err)
+	}
+
+	if _, err := c.Resolve(map[string]string{"provider": ProviderGoogle, "style": "warm"}, nil); err == nil {
+		t.Fatal("expected style to be rejected for google provider")
+	}
+	if _, err := c.Resolve(map[string]string{"provider": ProviderGoogle, "language": "auto"}, nil); err == nil {
+		t.Fatal("expected language=auto to be rejected for google provider")
+	}
+}

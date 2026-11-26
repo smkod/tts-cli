@@ -11,6 +11,11 @@ type ProviderVoiceLister interface {
 	ListVoicesForProvider(ctx context.Context, provider, lang string) ([]core.Voice, error)
 }
 
+// VoiceDesigner is an optional interface for backends that support prompt-based voice creation.
+type VoiceDesigner interface {
+	DesignVoice(ctx context.Context, req core.VoiceDesignRequest) (core.VoiceDesignResult, error)
+}
+
 // Router dispatches synthesis and voice listing to provider-specific backends.
 type Router struct {
 	Google core.Backend
@@ -45,6 +50,17 @@ func (r *Router) ListVoicesForProvider(ctx context.Context, provider, lang strin
 		return nil, core.Fail("INVALID_CONFIG", "Google provider is not initialized.", false)
 	}
 	return r.Google.ListVoices(ctx, lang)
+}
+
+func (r *Router) DesignVoice(ctx context.Context, req core.VoiceDesignRequest) (core.VoiceDesignResult, error) {
+	if r.Gemini == nil {
+		return core.VoiceDesignResult{}, core.Fail("INVALID_CONFIG", "Gemini provider is not initialized.", false)
+	}
+	d, ok := r.Gemini.(VoiceDesigner)
+	if !ok {
+		return core.VoiceDesignResult{}, core.Fail("INVALID_CONFIG", "Gemini provider does not support voice design.", false)
+	}
+	return d.DesignVoice(ctx, req)
 }
 
 func (r *Router) Close() error {
