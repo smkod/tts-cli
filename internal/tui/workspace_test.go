@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/smkod/tts-cli/internal/core"
 )
 
@@ -81,25 +82,59 @@ func TestUsageRowsAndSafeMetadata(t *testing.T) {
 				"unattributed": {UnknownRequests: 1}},
 		},
 	}, Configurations: []Configuration{{Provider: "gemini", ID: "safe-id", Name: "Friendly\x1b[31m\nname", Tier: "free"}}}
-	rows := strings.Join(m.usageLines(), "\n")
+	rows := ansi.Strip(strings.Join(m.usageLines(), "\n"))
 	for _, want := range []string{
-		"known subtotal",
-		"1 unknown",
+		"Unassigned tier: 2",
 		"Friendlyname",
 		"safe-id",
 		"free",
 		"removed-id",
 		"Legacy / unattributed",
 		"Google ADC",
-		"0 requests",
 		"not bills",
 	} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	if strings.Contains(rows, "\x1b") {
-		t.Fatal("escape injected")
+	if strings.Contains(strings.Join(m.usageLines(), "\n"), "\x1b[31m") {
+		t.Fatal("credential metadata injected an escape sequence")
+	}
+}
+
+func TestUsageCostLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		width int
+		want  []string
+	}{
+		{"wide table", 110, []string{"KNOWN USD", "UNPRICED", "0.001015     1         1"}},
+		{"narrow stacked", 38, []string{"PROVIDERS & CREDENTIALS · USD", "0.001015 · 1 request · 1 unknown"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newModel(context.Background(), Options{})
+			m.width, m.height, m.screen = tc.width, 25, "usage"
+			cost := core.CostSummary{EstimatedUSD: 0.001015, Requests: 1, UnknownRequests: 1}
+			m.usage = UsageSnapshot{
+				Report: core.UsageReport{
+					CostSummary: core.CostSummary{Requests: 3},
+					Providers: map[string]core.CostSummary{
+						core.ProviderGemini: cost, core.ProviderGoogle: {EstimatedUSD: 0.04, Requests: 1},
+					},
+					Configurations: map[string]map[string]core.CostSummary{
+						core.ProviderGemini: {"free-id": cost, "unattributed": {EstimatedUSD: 2, Requests: 1}},
+					},
+				},
+				Configurations: []Configuration{{Provider: core.ProviderGemini, ID: "free-id", Tier: core.KeyTierFree}},
+			}
+			view := ansi.Strip(m.View())
+			for _, fragment := range append(tc.want, "PAID ESTIMATE  USD 0.040000",
+				"FREE-TIER VALUE  USD 0.001015", "Known subtotal", "Unassigned tier: 1", "Gemini") {
+				if !strings.Contains(view, fragment) {
+					t.Errorf("missing %q in:\n%s", fragment, view)
+				}
+			}
+		})
 	}
 }
 func TestWorkspaceBoundsAndScrolling(t *testing.T) {

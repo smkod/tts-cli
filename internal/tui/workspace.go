@@ -104,20 +104,105 @@ func (m *model) cycle(direction string) bool {
 	f.input.SetValue(choices[(index+delta+len(choices))%len(choices)])
 	return true
 }
-func summary(s core.CostSummary) string {
-	amount := "total"
-	if s.UnknownRequests > 0 {
-		amount = "known subtotal"
+func (u UsageSnapshot) tierEstimates() (paid, free core.CostSummary, unassigned int) {
+	// Google Cloud usage is estimated at paid list rates, not verified billing.
+	paid = u.Report.Providers[core.ProviderGoogle]
+	seen := make(map[string]bool)
+	for _, c := range u.Configurations {
+		if c.Provider != core.ProviderGemini || c.ID == "" || c.ID == "unattributed" || seen[c.ID] {
+			continue
+		}
+		var target *core.CostSummary
+		switch c.Tier {
+		case core.KeyTierPaid:
+			target = &paid
+		case core.KeyTierFree:
+			target = &free
+		default:
+			continue
+		}
+		seen[c.ID] = true
+		s := u.Report.Configurations[c.Provider][c.ID]
+		target.EstimatedUSD += s.EstimatedUSD
+		target.Requests += s.Requests
+		target.UnknownRequests += s.UnknownRequests
 	}
-	return fmt.Sprintf("USD %.6f %s · %d requests · %d unknown", s.EstimatedUSD, amount, s.Requests, s.UnknownRequests)
+	return paid, free, max(0, u.Report.Requests-paid.Requests-free.Requests)
 }
+
 func (m model) usageLines() []string {
+	accent := lipgloss.NewStyle().Foreground(lipgloss.Color("141")).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	strong := lipgloss.NewStyle().Bold(true)
+	width := max(1, m.contentWidth()-2)
+	wide := width >= 48
+	paidStyle := strong.Foreground(lipgloss.AdaptiveColor{Light: "94", Dark: "221"})
+	freeStyle := strong.Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "78"})
+	requests := func(s core.CostSummary) string {
+		unit := "requests"
+		if s.Requests == 1 {
+			unit = "request"
+		}
+		value := fmt.Sprintf("%d %s", s.Requests, unit)
+		if s.UnknownRequests > 0 {
+			value += fmt.Sprintf(" · %d unknown", s.UnknownRequests)
+		}
+		return value
+	}
+	// Use terminal cells rather than bytes so credential names align even with wide characters.
+	columns := func(name, cost, count, unknown string, metrics lipgloss.Style) string {
+		name = ansi.Truncate(name, width-30, "…")
+		return name + strings.Repeat(" ", width-30-lipgloss.Width(name)) +
+			metrics.Render(fmt.Sprintf("  %12s %5s %9s", cost, count, unknown))
+	}
+	estimate := func(label string, s core.CostSummary, style lipgloss.Style) (string, string) {
+		detail := "  " + requests(s)
+		if s.UnknownRequests > 0 {
+			detail = "  Known subtotal · " + requests(s)
+		}
+		return style.Render(fmt.Sprintf("%s  USD %.6f", label, s.EstimatedUSD)), detail
+	}
+	paid, free, unassigned := m.usage.tierEstimates()
+	paidLabel, paidDetail := estimate("PAID ESTIMATE", paid, paidStyle)
+	freeLabel, freeDetail := estimate("FREE-TIER VALUE", free, freeStyle)
 	lines := []string{
-		"Usage & estimated costs",
-		"Local gross paid-list estimates — not bills.",
-		"Free tiers, credits, discounts and taxes excluded.",
+		accent.Render("Usage & estimated costs"),
+		paidLabel,
+		muted.Render(paidDetail),
+		freeLabel,
+		muted.Render(freeDetail),
 		"",
-		"Combined · " + summary(m.usage.Report.CostSummary),
+		muted.Render("Local gross paid-list estimates — not bills."),
+		muted.Render("Paid includes Google Cloud; free shows value at paid rates."),
+	}
+	if unassigned > 0 {
+		lines = append(lines, muted.Render(fmt.Sprintf("Unassigned tier: %d (see breakdown below)", unassigned)))
+	}
+	addRow := func(name, metadata string, s core.CostSummary, provider bool) {
+		cost := fmt.Sprintf("%.6f", s.EstimatedUSD)
+		style := lipgloss.NewStyle()
+		if provider {
+			style = strong
+		} else if s.Requests == 0 && s.UnknownRequests == 0 {
+			style = muted
+		}
+		if wide {
+			unknown := "—"
+			if s.UnknownRequests > 0 {
+				unknown = fmt.Sprint(s.UnknownRequests)
+			}
+			label := style.Render(name)
+			if metadata != "" && lipgloss.Width(name+" "+metadata) <= width-30 {
+				label += " " + metadata
+				metadata = ""
+			}
+			lines = append(lines, columns(label, cost, fmt.Sprint(s.Requests), unknown, style))
+		} else {
+			lines = append(lines, style.Render(name), style.Render("  "+cost+" · "+requests(s)))
+		}
+		if metadata != "" {
+			lines = append(lines, "    "+metadata)
+		}
 	}
 	if m.usageLoading {
 		lines = append(lines, "Refreshing local usage…")
@@ -137,8 +222,23 @@ func (m model) usageLines() []string {
 		names = append(names, p)
 	}
 	sort.Strings(names)
+	if len(names) > 0 {
+		heading := "PROVIDERS & CREDENTIALS · USD"
+		if wide {
+			heading = columns("PROVIDERS / KEYS", "KNOWN USD", "REQS", "UNPRICED", lipgloss.NewStyle())
+		}
+		lines = append(lines, "", muted.Render(heading))
+	}
 	for _, p := range names {
-		lines = append(lines, "", safe(p)+" · "+summary(m.usage.Report.Providers[p]))
+		lines = append(lines, muted.Render(strings.Repeat("─", width)))
+		name := safe(p)
+		switch p {
+		case core.ProviderGemini:
+			name = "Gemini"
+		case core.ProviderGoogle:
+			name = "Google Cloud"
+		}
+		addRow(name, "", m.usage.Report.Providers[p], true)
 		seen := map[string]bool{}
 		for _, c := range m.usage.Configurations {
 			if c.Provider != p {
@@ -149,11 +249,18 @@ func (m model) usageLines() []string {
 			if label == "" {
 				label = "Configured key"
 			}
-			lines = append(
-				lines,
-				"  "+label+" ["+safe(c.ID)+"] · "+safe(c.Tier),
-				"    "+summary(m.usage.Report.Configurations[p][c.ID]),
-			)
+			metadata := muted.Render("[" + safe(c.ID) + "]")
+			if tier := safe(c.Tier); tier != "" {
+				tierStyle := muted
+				switch tier {
+				case core.KeyTierFree:
+					tierStyle = freeStyle
+				case core.KeyTierPaid:
+					tierStyle = paidStyle
+				}
+				metadata += muted.Render(" · ") + tierStyle.Render(tier)
+			}
+			addRow("  "+label, metadata, m.usage.Report.Configurations[p][c.ID], false)
 		}
 		ids := make([]string, 0)
 		for id := range m.usage.Report.Configurations[p] {
@@ -163,20 +270,19 @@ func (m model) usageLines() []string {
 		}
 		sort.Strings(ids)
 		for _, id := range ids {
-			label := "Unidentified / removed key [" + safe(id) + "]"
+			label, metadata := "Unidentified / removed key", muted.Render("["+safe(id)+"]")
 			if id == "" || id == "unattributed" {
-				label = "Legacy / unattributed"
+				label, metadata = "Legacy / unattributed", ""
 			}
-			lines = append(lines, "  "+label, "    "+summary(m.usage.Report.Configurations[p][id]))
+			addRow("  "+label, metadata, m.usage.Report.Configurations[p][id], false)
 		}
 		if p == core.ProviderGoogle {
-			lines = append(lines, "  Google ADC/default credentials: no per-key attribution.")
+			lines = append(lines, muted.Render("  Google ADC: no per-key attribution."))
 		}
 	}
 	if len(names) == 0 {
 		lines = append(lines, "No local usage recorded yet.")
 	}
-	lines = append(lines, "", "↑/↓ or PgUp/PgDown: scroll · R: refresh local records")
 	return lines
 }
 func (m model) View() string {
@@ -260,7 +366,7 @@ func (m model) View() string {
 	footer := muted.Render("F1/F2: workspace · Tab: focus · Ctrl+G: generate" +
 		" · Ctrl+P: preview · Esc: cancel · Ctrl+Q: quit")
 	if m.screen == "usage" {
-		footer = muted.Render("F1: Generate · R/Ctrl+R: refresh · ↑/↓: scroll · Ctrl+Q: quit")
+		footer = muted.Render("F1: Generate · R: refresh · ↑/↓ PgUp/PgDn: scroll · Ctrl+Q: quit")
 	}
 	// Fit terminal cells and reserve bottom status rows, prioritizing active controls.
 	lines := []string{header}
