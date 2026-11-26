@@ -1,5 +1,6 @@
 /bin/
 /dist/
+/temp/
 /tts-cli
 /tts-cli.exe
 /ttsi

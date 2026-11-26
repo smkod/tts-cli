@@ -179,6 +179,7 @@ func (a *app) batch() *cobra.Command {
 					if err == nil {
 						var result core.Generation
 						result, err = eng.Generate(cmd.Context(), s, item.Text, core.Options{
+							ShowCost: f.showCost,
 							DryRun:   f.dryRun,
 							NoCache:  f.noCache,
 							Turns:    item.Turns,
@@ -212,6 +213,13 @@ func (a *app) batch() *cobra.Command {
 		}
 		close(jobs)
 		wg.Wait()
+		if f.showCost {
+			for _, r := range report.Items {
+				if r.Data != nil && r.Data.Cost != nil {
+					a.warn(r.ID + ": " + r.Data.Cost.String())
+				}
+			}
+		}
 		for _, r := range report.Items {
 			if r.Success {
 				report.Succeeded++
