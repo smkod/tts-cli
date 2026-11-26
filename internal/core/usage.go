@@ -11,12 +11,14 @@ import (
 
 // Usage contains metering only, never input text, audio, or credentials.
 type Usage struct {
+	CredentialID string `json:"-"`
 	Characters   int    `json:"characters"`
 	InputTokens  *int64 `json:"input_tokens,omitempty"`
 	OutputTokens *int64 `json:"output_tokens,omitempty"`
 }
 
 type CostRecord struct {
+	CredentialID  string    `json:"credential_id,omitempty"`
 	Version       int       `json:"version"`
 	At            time.Time `json:"at"`
 	Provider      string    `json:"provider"`
@@ -29,7 +31,10 @@ type CostRecord struct {
 
 // EstimateUsage applies gross standard paid-list prices, not account-specific billing.
 func EstimateUsage(provider, model string, u Usage, at time.Time) CostRecord {
-	r := CostRecord{Version: 1, At: at.UTC(), Provider: provider, Model: model, Usage: u, PricingDate: "2026-11-26"}
+	r := CostRecord{
+		Version: 1, At: at.UTC(), Provider: provider, Model: model, Usage: u,
+		CredentialID: u.CredentialID, PricingDate: "2026-11-26",
+	}
 	var cost float64
 	switch provider {
 	case ProviderGoogle:
@@ -141,11 +146,15 @@ func SaveUsage(configDir string, record CostRecord) (resultErr error) {
 
 type UsageReport struct {
 	CostSummary
-	Providers map[string]CostSummary `json:"providers"`
+	Providers      map[string]CostSummary            `json:"providers"`
+	Configurations map[string]map[string]CostSummary `json:"configurations"`
 }
 
 func ReadUsage(configDir string) (UsageReport, error) {
-	total := UsageReport{CostSummary: NewCostSummary(), Providers: make(map[string]CostSummary)}
+	total := UsageReport{
+		CostSummary: NewCostSummary(), Providers: make(map[string]CostSummary),
+		Configurations: make(map[string]map[string]CostSummary),
+	}
 	dir := UsageDir(configDir)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -176,6 +185,19 @@ func ReadUsage(configDir string) (UsageReport, error) {
 		}
 		provider.Add(r)
 		total.Providers[r.Provider] = provider
+		if total.Configurations[r.Provider] == nil {
+			total.Configurations[r.Provider] = make(map[string]CostSummary)
+		}
+		id := r.CredentialID
+		if id == "" {
+			id = "unattributed"
+		}
+		configuration, ok := total.Configurations[r.Provider][id]
+		if !ok {
+			configuration = NewCostSummary()
+		}
+		configuration.Add(r)
+		total.Configurations[r.Provider][id] = configuration
 	}
 	return total, nil
 }

@@ -152,6 +152,49 @@ across [Anki clients](https://docs.ankiweb.net/media.html). WAV (`LINEAR16`,
 uncompressed 16-bit PCM) uses the native sample rate. SSML, pitch, speaking rate,
 and LLM sampling parameters (`temperature`, `seed`, `systemInstruction`) are not exposed.
 
+## Interactive terminal interface
+
+Run `ttsi tui` in an interactive terminal to open the workspace with Generate
+and Usage views. Use
+`ttsi tui --config PATH` or `TTS_CONFIG` to select the same YAML configuration
+as other commands; environment settings override YAML defaults. Editing the
+form affects only the current session and does not save configuration.
+
+F1 opens Generate; F2 opens Usage. Ctrl+P previews without provider calls or file
+writes. Ctrl+R refreshes local usage; in Usage, `r` also refreshes, while arrow
+keys and Page Up / Page Down scroll the report.
+Tab / Shift+Tab moves between fields. Ctrl+G generates from any field, or press
+Enter on Generate. Esc cancels an active generation. Ctrl+Q or Ctrl+C quits,
+canceling and waiting for any active generation before closing the backend.
+The form supports provider, model, language, voice, style, output path, format,
+bitrate, and key tier; smaller terminals display the focused field.
+Left / Right cycles provider, format, or bundled voices when that field is
+focused; voice names also accept direct input.
+
+This interface generates one plain-text audio file at a time using the same
+validation, cache, encoding, and provider pipeline as `generate`. It does not
+provide batch, script, key-management, or voice-design screens. Generation can
+incur provider charges. Provider warnings are suppressed while the interface
+is active to protect terminal rendering; generation errors appear in the form.
+
+Usage shows combined estimates, service totals, and Gemini API-key configurations
+(including configured keys with no recorded requests). Names, tiers, and stable
+nonsecret identifiers identify configurations; API keys and key substrings are
+never displayed. Attribution follows the key that actually served a successful
+response, including failover. Historical records without attribution remain
+`unattributed`, as does Google default-credential usage: account/project identity
+is not known. Usage refreshes on entry and after generation.
+
+These are local gross paid-list estimates, not a bill or a free-tier balance.
+Free tiers, credits, discounts, and taxes are excluded, and local tracking can
+be incomplete. The same breakdown is available through `ttsi usage --json` in
+the additive `configurations` field, grouped by provider then credential ID.
+
+`--json`, piped stdin, and redirected stdout are not supported by `tui`; use
+`ttsi generate` or `ttsi batch` for automation. Running `ttsi` without arguments
+still shows help, and the existing text shorthand is unchanged. To synthesize
+the reserved command name literally, use `ttsi generate -- "tui"`.
+
 ## Configuration and files
 
 The precedence is **flags → batch item → environment → YAML → built-in defaults**.

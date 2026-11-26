@@ -121,3 +121,61 @@ func TestUsageRecordedBeforeOutputFailure(t *testing.T) {
 		t.Fatalf("%+v %v", totals, err)
 	}
 }
+
+func TestAttributedUsageRecordedBeforeOutputFailure(t *testing.T) {
+	s := testSettings(t)
+	s.Provider = ProviderGemini
+	s.Model = DefaultGeminiModel
+	s.ConfigDir = t.TempDir()
+	out := filepath.Join(s.OutputDir, "attributed.mp3")
+	e := &Engine{Provider: fakeProvider(func(_ context.Context, r Request) ([]byte, error) {
+		r.ReportUsage(Usage{CredentialID: "0123456789abcdef", InputTokens: int64ptr(10), OutputTokens: int64ptr(20)})
+		if err := os.Mkdir(out, 0700); err != nil {
+			return nil, err
+		}
+		return frame(1), nil
+	})}
+	if _, err := e.Generate(context.Background(), s, "hello", Options{Output: out, NoCache: true}); err == nil {
+		t.Fatal("expected output error")
+	}
+	totals, err := ReadUsage(s.ConfigDir)
+	if err != nil || totals.Requests != 1 || totals.Configurations[ProviderGemini]["0123456789abcdef"].Requests != 1 {
+		t.Fatalf("lost attributed record: %+v %v", totals, err)
+	}
+}
+
+func TestUsageConfigurationsPreserveLegacyAndUnknownTotals(t *testing.T) {
+	dir := t.TempDir()
+	at := time.Date(2026, 11, 26, 0, 0, 0, 0, time.UTC)
+	for _, u := range []Usage{
+		{Characters: 2},
+		{CredentialID: "0123456789abcdef", Characters: 3, InputTokens: int64ptr(100), OutputTokens: int64ptr(250)},
+		{CredentialID: "0123456789abcdef", Characters: 4},
+		{CredentialID: "fedcba9876543210", Characters: 5, InputTokens: int64ptr(100), OutputTokens: int64ptr(250)},
+	} {
+		r := EstimateUsage(ProviderGemini, DefaultGeminiModel, u, at)
+		if r.CredentialID != u.CredentialID {
+			t.Fatal("credential attribution lost")
+		}
+		if err := SaveUsage(dir, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := ReadUsage(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configurations := got.Configurations[ProviderGemini]
+	if got.Requests != 4 || got.UnknownRequests != 2 || got.Providers[ProviderGemini].Requests != 4 ||
+		configurations["unattributed"].Requests != 1 || configurations["0123456789abcdef"].Requests != 2 ||
+		configurations["0123456789abcdef"].UnknownRequests != 1 {
+		t.Fatalf("wrong grouping: %+v", got)
+	}
+	var sum float64
+	for _, configuration := range configurations {
+		sum += configuration.EstimatedUSD
+	}
+	if math.Abs(sum-got.EstimatedUSD) > 1e-10 {
+		t.Fatalf("aggregate mismatch: %v %v", sum, got.EstimatedUSD)
+	}
+}

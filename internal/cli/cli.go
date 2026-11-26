@@ -25,6 +25,9 @@ type response struct {
 
 type app struct {
 	backend          core.Backend
+	stdin            io.Reader
+	terminal         func(any) bool
+	runTUI           tuiRunner
 	stdout, stderr   io.Writer
 	json, alwaysJSON bool
 	configFlag       string
@@ -35,15 +38,19 @@ type app struct {
 }
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, backend core.Backend) int {
-	a := &app{backend: backend, stdout: stdout, stderr: stderr}
-	defer backend.Close()
+	a := &app{backend: backend, stdin: os.Stdin, stdout: stdout, stderr: stderr}
+	return a.run(ctx, args)
+}
+
+func (a *app) run(ctx context.Context, args []string) int {
+	defer a.backend.Close()
 	root := a.root()
 	args, defaultJSON := route(root, args)
 	a.alwaysJSON = defaultJSON
 	earlyJSON := wantsJSON(args)
 	root.SetArgs(args)
-	root.SetOut(stdout)
-	root.SetErr(stderr)
+	root.SetOut(a.stdout)
+	root.SetErr(a.stderr)
 	_, err := root.ExecuteContextC(ctx)
 	if err == nil && a.result == nil {
 		return 0
@@ -59,12 +66,12 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, backend c
 		}
 	}
 	if a.json || a.alwaysJSON || (err != nil && earlyJSON) {
-		if encodeErr := json.NewEncoder(stdout).Encode(response{1, err == nil && a.code == 0, a.result, p}); encodeErr != nil {
-			fmt.Fprintln(stderr, "ttsi: Cannot write JSON output.")
+		if encodeErr := json.NewEncoder(a.stdout).Encode(response{1, err == nil && a.code == 0, a.result, p}); encodeErr != nil {
+			fmt.Fprintln(a.stderr, "ttsi: Cannot write JSON output.")
 			return 1
 		}
 	} else if a.human != "" {
-		if _, writeErr := fmt.Fprintln(stdout, a.human); writeErr != nil {
+		if _, writeErr := fmt.Fprintln(a.stdout, a.human); writeErr != nil {
 			return 1
 		}
 	}
@@ -165,7 +172,7 @@ func (a *app) root() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit versioned JSON")
 	root.PersistentFlags().StringVar(&a.configFlag, "config", "", "Select a YAML configuration file")
-	root.AddCommand(a.generate(), a.batch(), a.voices(), a.modifiers(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login(), a.keys(), a.agentGuide(), a.usage())
+	root.AddCommand(a.tui(), a.generate(), a.batch(), a.voices(), a.modifiers(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login(), a.keys(), a.agentGuide(), a.usage())
 	return root
 }
 

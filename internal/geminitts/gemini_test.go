@@ -86,20 +86,25 @@ func TestFreeToPaidFailoverAndCooldownPersistence(t *testing.T) {
 	defer srv.Close()
 
 	var warnings []string
+	var metering []core.Usage
 	g := &Gemini{BaseURL: srv.URL, HTTPClient: srv.Client(), Pool: NewKeyPool()}
 	req := core.Request{
-		Text:      "Hello Gemini 3.8",
-		Provider:  core.ProviderGemini,
-		Model:     core.DefaultGeminiModel,
-		KeyTier:   core.KeyTierAuto,
-		Voice:     "en-US-Chirp3-HD-Kore",
-		Format:    core.FormatWAV,
-		ConfigDir: cfgDir,
-		CacheDir:  cacheDir,
-		Warn:      func(msg string) { warnings = append(warnings, msg) },
+		Text:        "Hello Gemini 3.8",
+		Provider:    core.ProviderGemini,
+		Model:       core.DefaultGeminiModel,
+		KeyTier:     core.KeyTierAuto,
+		Voice:       "en-US-Chirp3-HD-Kore",
+		Format:      core.FormatWAV,
+		ConfigDir:   cfgDir,
+		CacheDir:    cacheDir,
+		Warn:        func(msg string) { warnings = append(warnings, msg) },
+		ReportUsage: func(u core.Usage) { metering = append(metering, u) },
 	}
 
 	audio, err := g.Synthesize(context.Background(), req)
+	if len(metering) != 1 || metering[0].CredentialID != KeyID("AIza-paid-key-9999") {
+		t.Fatalf("metered unsuccessful/preferred key instead of successful key: %+v", metering)
+	}
 	if err != nil {
 		t.Fatalf("Synthesize failed: %v", err)
 	}
@@ -362,6 +367,9 @@ func TestGenerateContentReportsUsage(t *testing.T) {
 			calls := 0
 			_, _, _, _, err := g.callGenerateContent(context.Background(), "fake", core.DefaultGeminiModel, generateContentRequest{}, func(u core.Usage) {
 				calls++
+				if u.CredentialID != KeyID("fake") {
+					t.Errorf("missing successful key attribution: %+v", u)
+				}
 				if (u.InputTokens != nil) != tc.known || (u.OutputTokens != nil) != tc.known {
 					t.Errorf("%+v", u)
 				}

@@ -443,7 +443,7 @@ func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model string, 
 		return nil, resp.StatusCode, 0, "", core.Fail("INVALID_AUDIO", "Gemini returned malformed JSON.", false)
 	}
 	if len(reports) > 0 && reports[0] != nil {
-		u := core.Usage{}
+		u := core.Usage{CredentialID: KeyID(apiKey)}
 		if parsed.UsageMetadata != nil {
 			u.InputTokens = parsed.UsageMetadata.PromptTokenCount
 			u.OutputTokens = parsed.UsageMetadata.CandidatesTokenCount
