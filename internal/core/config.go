@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -137,6 +138,22 @@ func setting(k string, layers ...map[string]string) string {
 func (c Config) Resolve(flags, item map[string]string) (Settings, error) {
 	return c.resolve(flags, item, c.env, c.Stored, c.defaults)
 }
+
+// ResolveInteractive resolves form overrides, allowing an optional style to be
+// cleared without changing persisted settings or explicit CLI flag validation.
+func (c Config) ResolveInteractive(overrides map[string]string) (Settings, error) {
+	style, present := overrides["style"]
+	if !present || strings.TrimSpace(style) != "" {
+		return c.Resolve(overrides, nil)
+	}
+	layers := []map[string]string{overrides, c.env, c.Stored, c.defaults}
+	for i, layer := range layers {
+		layers[i] = maps.Clone(layer)
+		delete(layers[i], "style")
+	}
+	return c.resolve(layers...)
+}
+
 func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 	get := func(k string) string { return setting(k, layers...) }
 	s := Settings{

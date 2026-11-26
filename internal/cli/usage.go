@@ -32,8 +32,18 @@ func (a *app) usage() *cobra.Command {
 		sort.Strings(providers)
 		for _, provider := range providers {
 			lines = append(lines, format(provider, totals.Providers[provider]))
+			ids := make([]string, 0, len(totals.Configurations[provider]))
+			for id := range totals.Configurations[provider] {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				lines = append(lines, format("  configuration "+id, totals.Configurations[provider][id]))
+			}
 		}
 		lines = append(lines, totals.Basis)
+		lines = append(lines, "Local estimates, not a bill; tracking may be incomplete. "+
+			"Historical and Google default-credential usage is unattributed.")
 		a.human = strings.Join(lines, "\n")
 		return nil
 	})

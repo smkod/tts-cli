@@ -113,3 +113,30 @@ func TestGeminiStyleAndAutoLanguageConfig(t *testing.T) {
 		t.Fatal("expected language=auto to be rejected for google provider")
 	}
 }
+
+func TestInteractiveStyleClearingDoesNotMutateConfiguration(t *testing.T) {
+	c := Config{
+		Stored:   map[string]string{"style": "warm"},
+		env:      map[string]string{"style": "whispered"},
+		defaults: map[string]string{"provider": ProviderGemini, "model": DefaultGeminiModel, "key_tier": KeyTierAuto, "language": "en-US", "voice": "kore", "format": FormatWAV, "bitrate": "96", "jobs": "4", "output_dir": t.TempDir(), "cache_dir": t.TempDir()},
+	}
+	for _, tc := range []struct{ name, style, provider string }{
+		{name: "clear Gemini", style: "", provider: ProviderGemini},
+		{name: "clear for Google", style: "  ", provider: ProviderGoogle},
+		{name: "replace style", style: "cheerful", provider: ProviderGemini},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			overrides := map[string]string{"style": tc.style, "provider": tc.provider}
+			s, err := c.ResolveInteractive(overrides)
+			if err != nil || s.Style != strings.TrimSpace(tc.style) {
+				t.Fatalf("got %+v, %v", s, err)
+			}
+			if overrides["style"] != tc.style || c.Stored["style"] != "warm" || c.env["style"] != "whispered" {
+				t.Fatal("resolver mutated input layers")
+			}
+		})
+	}
+	if _, err := c.Resolve(map[string]string{"style": ""}, nil); err == nil {
+		t.Fatal("ordinary explicit blank style must remain invalid")
+	}
+}
