@@ -318,3 +318,63 @@ If `FFMPEG_BUNDLE_ROOT` is unset, release packaging warns and omits FFmpeg;
 users of those packages must install FFmpeg with `libmp3lame` separately for MP3
 output. Once a bundle root is supplied, missing assets or invalid checksums and
 notices fail packaging rather than silently publishing an incomplete bundle.
+
+## Estimated cost and local usage
+
+```powershell
+ttsi "Hello" --show-cost
+ttsi generate "Hello" --show-cost --json
+ttsi batch manifest.json --show-cost
+ttsi usage
+ttsi usage --json
+```
+
+`--show-cost` is off by default. It adds a `cost` object to generation JSON;
+for human output it writes an estimate to stderr, leaving the audio path on
+stdout unchanged. Batch JSON includes each item's cost when requested, with
+per-item summaries on stderr. `--show-cost=false` disables the display.
+
+Successful provider responses are tracked locally whether or not cost display
+is enabled. `ttsi usage` reports a combined total and a breakdown by provider;
+JSON preserves the combined fields and adds a `providers` object. It reports
+cumulative usage recorded by this installation,
+not Google account spending or historical usage. Records live in
+`usage/v1/` beside the selected configuration file (`--config` / `TTS_CONFIG`),
+separate from the audio cache. Each immutable JSON record contains a timestamp,
+provider/model, character/token counts, pricing source/date and the original
+estimate; no input text, audio, API keys, or credentials. Concurrent processes
+publish separate atomic records, so they do not overwrite each other's totals.
+Changing configuration directories selects a separate history. Deleting the
+usage directory resets that history; deleting the audio cache does not.
+
+Estimates use **gross standard paid-list USD pricing**, even for a Gemini free
+key. Free tiers, credits, negotiated discounts, taxes, and other cloud services
+are excluded. A local batch uses ordinary synchronous API pricing, not Google's
+Batch API discount. Cache hits, coalesced duplicate requests, and dry runs do not
+add provider usage; a displayed cache-hit cost is zero incremental cost, not the
+original generation's cost. Dry runs do not emit a cost object.
+
+Pricing snapshot verified November 26, 2026:
+
+- [Chirp 3 HD](https://cloud.google.com/text-to-speech/pricing): $30 per million
+  submitted Unicode characters, including whitespace (not UTF-8 bytes).
+- [Gemini 3.8 TTS](https://ai.google.dev/gemini-api/docs/pricing): per million
+  input/output tokens, Flash $0.50/$9 and Flash-Lite $0.50/$6 through December
+  31, 2026; $1/$18 and $1/$12 respectively starting January 1, 2027 (UTC).
+
+Gemini uses returned `usageMetadata` prompt and candidate token counts, including
+style/script overhead metered by Google. Missing metadata or unsupported pricing
+is **unknown**, never assumed free. JSON `unknown_requests` counts those requests;
+`estimated_usd` is only the known subtotal when that count is nonzero. Historical
+records retain their original estimate when rates change. Prices are bundled,
+not fetched live; update the CLI when Google changes pricing.
+
+Tracking occurs before local encoding/output writes, so a successful provider
+response can count even if saving audio later fails. Failed/rejected requests,
+network timeouts with uncertain server-side completion, responses that cannot be
+parsed, crashes before recording, and voice-design operations are not included.
+Retries/failover count each observed successful response, not rejected attempts.
+Persistence failures warn without failing otherwise successful synthesis; usage
+may then be incomplete. Corrupt records cause `ttsi usage` to report an error
+rather than silently returning misleading totals. Treat this as a local estimate,
+not a billing ledger; use Google Billing for billed charges.

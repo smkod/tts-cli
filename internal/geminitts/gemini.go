@@ -142,6 +142,10 @@ type createVoiceResponse struct {
 }
 
 type generateContentResponse struct {
+	UsageMetadata *struct {
+		PromptTokenCount     *int64 `json:"promptTokenCount"`
+		CandidatesTokenCount *int64 `json:"candidatesTokenCount"`
+	} `json:"usageMetadata"`
 	Candidates []struct {
 		Content struct {
 			Parts []struct {
@@ -190,7 +194,7 @@ func (g *Gemini) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		var retryAfter time.Duration
 		var reason string
 		var reqErr error
-		wav, status, retryAfter, reason, reqErr = g.callGenerateContent(ctx, apiKey, model, payload)
+		wav, status, retryAfter, reason, reqErr = g.callGenerateContent(ctx, apiKey, model, payload, r.ReportUsage)
 		return status, retryAfter, reason, reqErr
 	})
 	if err != nil {
@@ -402,7 +406,7 @@ func buildGenerateContentRequest(r core.Request) generateContentRequest {
 	}
 }
 
-func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model string, payload generateContentRequest) ([]byte, int, time.Duration, string, error) {
+func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model string, payload generateContentRequest, reports ...func(core.Usage)) ([]byte, int, time.Duration, string, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, 0, "", err
@@ -437,6 +441,14 @@ func (g *Gemini) callGenerateContent(ctx context.Context, apiKey, model string, 
 	var parsed generateContentResponse
 	if err := json.Unmarshal(respBytes, &parsed); err != nil {
 		return nil, resp.StatusCode, 0, "", core.Fail("INVALID_AUDIO", "Gemini returned malformed JSON.", false)
+	}
+	if len(reports) > 0 && reports[0] != nil {
+		u := core.Usage{}
+		if parsed.UsageMetadata != nil {
+			u.InputTokens = parsed.UsageMetadata.PromptTokenCount
+			u.OutputTokens = parsed.UsageMetadata.CandidatesTokenCount
+		}
+		reports[0](u)
 	}
 	for _, cand := range parsed.Candidates {
 		for _, part := range cand.Content.Parts {

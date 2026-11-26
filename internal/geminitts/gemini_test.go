@@ -341,3 +341,37 @@ func TestDesignVoice(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", res)
 	}
 }
+
+func TestGenerateContentReportsUsage(t *testing.T) {
+	for _, tc := range []struct {
+		name, metadata string
+		known          bool
+	}{
+		{"metadata", `,"usageMetadata":{"promptTokenCount":100,"candidatesTokenCount":250}`, true},
+		{"missing metadata", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body := `{"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"audio/wav","data":"` + base64.StdEncoding.EncodeToString(testWAV()) + `"}}]}}]` + tc.metadata + `}`
+				if _, err := w.Write([]byte(body)); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer srv.Close()
+			g := &Gemini{BaseURL: srv.URL, HTTPClient: srv.Client()}
+			calls := 0
+			_, _, _, _, err := g.callGenerateContent(context.Background(), "fake", core.DefaultGeminiModel, generateContentRequest{}, func(u core.Usage) {
+				calls++
+				if (u.InputTokens != nil) != tc.known || (u.OutputTokens != nil) != tc.known {
+					t.Errorf("%+v", u)
+				}
+				if tc.known && (*u.InputTokens != 100 || *u.OutputTokens != 250) {
+					t.Errorf("%+v", u)
+				}
+			})
+			if err != nil || calls != 1 {
+				t.Fatalf("calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}

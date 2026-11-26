@@ -165,7 +165,7 @@ func (a *app) root() *cobra.Command {
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "Emit versioned JSON")
 	root.PersistentFlags().StringVar(&a.configFlag, "config", "", "Select a YAML configuration file")
-	root.AddCommand(a.generate(), a.batch(), a.voices(), a.modifiers(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login(), a.keys(), a.agentGuide())
+	root.AddCommand(a.generate(), a.batch(), a.voices(), a.modifiers(), a.providers(), a.config(), a.capabilities(), a.doctor(), a.login(), a.keys(), a.agentGuide(), a.usage())
 	return root
 }
 
@@ -196,7 +196,7 @@ func (a *app) settings(cmd *cobra.Command, flags map[string]string) (core.Settin
 
 type synthFlags struct {
 	lang, voice, provider, model, keyTier, style, script, cache, out, outDir, format string
-	noCache, dryRun                                                                  bool
+	noCache, dryRun, showCost                                                        bool
 	jobs                                                                             int
 	bitrate                                                                          int
 }
@@ -212,6 +212,7 @@ func bindSynth(cmd *cobra.Command, f *synthFlags, batch bool) {
 	flags.IntVar(&f.bitrate, "bitrate", 96, "Set MP3 bitrate in kbps (8-320; default 96)")
 	flags.StringVar(&f.format, "format", "", "Select the output format (wav or mp3)")
 	flags.StringVar(&f.cache, "cache-dir", "", "Override the cache directory")
+	flags.BoolVar(&f.showCost, "show-cost", false, "Show gross estimated usage cost after generation")
 	flags.BoolVar(&f.noCache, "no-cache", false, "Skip cache reads and writes")
 	flags.BoolVar(&f.dryRun, "dry-run", false, "Inspect the request without network or file writes")
 	if batch {
@@ -281,6 +282,7 @@ func (a *app) generate() *cobra.Command {
 			text = args[0]
 		}
 		g, e := eng.Generate(cmd.Context(), s, text, core.Options{
+			ShowCost: f.showCost,
 			Output:   f.out,
 			DryRun:   f.dryRun,
 			NoCache:  f.noCache,
@@ -291,6 +293,9 @@ func (a *app) generate() *cobra.Command {
 			return e
 		}
 		a.result, a.human = g, core.FormatFile(g)
+		if g.Cost != nil && !a.json {
+			a.warn(g.Cost.String())
+		}
 		return nil
 	})
 	bindSynth(cmd, f, false)

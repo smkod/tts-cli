@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	texttospeech "cloud.google.com/go/texttospeech/apiv1"
 	pb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
@@ -93,6 +94,9 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 	}, gax.WithRetry(noRetry))
 	if err != nil {
 		return nil, classify(err, true)
+	}
+	if r.ReportUsage != nil {
+		r.ReportUsage(core.Usage{Characters: utf8.RuneCountInString(r.Text)})
 	}
 	if r.Format == core.FormatMP3 {
 		return EncodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)

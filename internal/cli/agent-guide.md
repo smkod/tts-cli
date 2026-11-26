@@ -94,3 +94,21 @@ resubmit only failed items as needed.
 - Do not claim a file was generated on a failed result or a dry run. Uploading
   audio or changing another application is a separate action requiring the
   user's requested scope; this CLI does not perform it.
+
+## Estimated costs and local totals
+
+- Use `ttsi generate "text" --show-cost --json` to include an optional `cost`
+  object; the flag defaults off. Human estimates go to stderr, not the path stream.
+- Use `ttsi batch manifest.json --show-cost` for per-item costs in batch JSON.
+- Use `ttsi usage --json` for combined totals and a `providers` breakdown of
+  locally recorded usage for the selected configuration directory, not historical
+  Google billing.
+- Tracking is automatic for new successful synthesis responses, independent of
+  `--show-cost`; cache hits and dry runs add no usage. Missing Gemini token
+  metadata is unknown (`unknown_requests`), not free. `estimated_usd` is a known
+  subtotal when unknown requests exist.
+- All costs are gross paid-list USD estimates, excluding free tiers, credits,
+  discounts, taxes and other services. Voice design and uncertain failed calls
+  are not tracked. Usage persistence warnings mean totals may be incomplete.
+- Records in `usage/v1/` beside the configuration contain metering only, not
+  input text, audio, or secrets, and preserve historical estimates.

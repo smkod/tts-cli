@@ -221,6 +221,7 @@ type VoiceDesignResult struct {
 }
 
 type Request struct {
+	ReportUsage                                             func(Usage) `json:"-"`
 	Text, Provider, Model, KeyTier, Language, Voice, Format string
 	Style                                                   string
 	LanguagePinned                                          bool
@@ -248,25 +249,27 @@ type Backend interface {
 	Close() error
 }
 type Generation struct {
-	Bitrate      int      `json:"bitrate,omitempty"`
-	Format       string   `json:"format"`
-	File         string   `json:"file"`
-	Provider     string   `json:"provider"`
-	Model        string   `json:"model,omitempty"`
-	Voice        string   `json:"voice"`
-	Language     string   `json:"language"`
-	Style        string   `json:"style,omitempty"`
-	Turns        int      `json:"turns,omitempty"`
-	Speakers     []string `json:"speakers,omitempty"`
-	DetectedTags []string `json:"detected_tags,omitempty"`
-	Cached       bool     `json:"cached"`
-	Characters   int      `json:"characters"`
-	DryRun       bool     `json:"dry_run,omitempty"`
-	CacheStatus  string   `json:"cache_status"`
+	Cost         *CostSummary `json:"cost,omitempty"`
+	Bitrate      int          `json:"bitrate,omitempty"`
+	Format       string       `json:"format"`
+	File         string       `json:"file"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model,omitempty"`
+	Voice        string       `json:"voice"`
+	Language     string       `json:"language"`
+	Style        string       `json:"style,omitempty"`
+	Turns        int          `json:"turns,omitempty"`
+	Speakers     []string     `json:"speakers,omitempty"`
+	DetectedTags []string     `json:"detected_tags,omitempty"`
+	Cached       bool         `json:"cached"`
+	Characters   int          `json:"characters"`
+	DryRun       bool         `json:"dry_run,omitempty"`
+	CacheStatus  string       `json:"cache_status"`
 }
 type Options struct {
 	Output          string
 	NoCache, DryRun bool
+	ShowCost        bool
 	Turns           []Turn
 	Speakers        map[string]string
 }
@@ -493,6 +496,23 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 		Format: s.Format, Bitrate: s.Bitrate,
 		ConfigDir: s.ConfigDir, CacheDir: s.CacheDir, Warn: e.Warn,
 	}
+	summary := NewCostSummary()
+	var usageMu sync.Mutex
+	r.ReportUsage = func(u Usage) {
+		if r.Provider == ProviderGemini {
+			u.Characters = totalChars
+		}
+		record := EstimateUsage(r.Provider, r.Model, u, time.Now())
+		usageMu.Lock()
+		summary.Add(record)
+		usageMu.Unlock()
+		if r.ConfigDir == "" {
+			return
+		}
+		if err := SaveUsage(r.ConfigDir, record); err != nil && e.Warn != nil {
+			e.Warn("Could not record usage: " + err.Error())
+		}
+	}
 	if r.Format != FormatWAV && r.Format != FormatMP3 {
 		return Generation{}, Fail("INVALID_CONFIG", "Format must be wav or mp3.", false)
 	}
@@ -557,6 +577,9 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 	if err = writeOutput(out, data); err != nil {
 		return Generation{}, err
 	}
+	if o.ShowCost {
+		result.Cost = &summary
+	}
 	return result, nil
 }
 
@@ -608,7 +631,18 @@ func (e *Engine) withRetry(ctx context.Context, r Request) ([]byte, error) {
 			return nil, err
 		}
 		attempt, cancel := context.WithTimeout(ctx, 30*time.Second)
-		data, err := e.Provider.Synthesize(attempt, r)
+		reported := false
+		req := r
+		req.ReportUsage = func(u Usage) {
+			reported = true
+			if r.ReportUsage != nil {
+				r.ReportUsage(u)
+			}
+		}
+		data, err := e.Provider.Synthesize(attempt, req)
+		if err == nil && !reported && r.ReportUsage != nil {
+			r.ReportUsage(Usage{Characters: utf8.RuneCountInString(r.Text)})
+		}
 		cancel()
 		if err == nil {
 			if !validAudio(data, r.Format) {
