@@ -17,6 +17,8 @@ import (
 
 type batchItem struct {
 	Text     string
+	Turns    []core.Turn
+	Speakers map[string]string
 	Settings map[string]string
 }
 
@@ -68,18 +70,34 @@ func jsonText(raw json.RawMessage) (string, bool) {
 func decodeItem(raw json.RawMessage) (string, batchItem, bool) {
 	fields, valid := object(raw)
 	id, validID := jsonText(fields["id"])
-	text, validText := jsonText(fields["text"])
+	text, hasText := jsonText(fields["text"])
+	_, textPresent := fields["text"]
+	_, turnsPresent := fields["turns"]
 	item := batchItem{Text: text, Settings: map[string]string{}}
-	valid = valid && validID && strings.TrimSpace(id) != "" && validText
+	valid = valid && validID && strings.TrimSpace(id) != ""
+	if textPresent == turnsPresent {
+		valid = false
+	}
+	if textPresent && !hasText {
+		valid = false
+	}
 	for k, value := range fields {
 		switch k {
 		case "id", "text":
+		case "turns":
+			turns, ok := decodeTurns(value)
+			item.Turns = turns
+			valid = valid && ok
+		case "speakers":
+			speakers, ok := decodeSpeakers(value)
+			item.Speakers = speakers
+			valid = valid && ok
 		case "bitrate":
 			var n int
 			err := json.Unmarshal(value, &n)
 			item.Settings[k] = fmt.Sprint(n)
 			valid = valid && err == nil
-		case "language", "voice", "format":
+		case "language", "voice", "format", "provider", "model", "key_tier", "style":
 			v, ok := jsonText(value)
 			item.Settings[k] = v
 			valid = valid && ok
@@ -146,7 +164,7 @@ func (a *app) batch() *cobra.Command {
 			report.Items[i].ID = id
 			ids[id]++
 			if !ok {
-				report.Items[i].Error = core.Fail("INVALID_ITEM", "Expected a nonempty string ID, text, and optional language, voice, and format strings.", false)
+				report.Items[i].Error = core.Fail("INVALID_ITEM", "Expected a nonempty string ID, either text or turns, and valid optional settings.", false)
 			}
 		}
 		eng := &core.Engine{Provider: a.backend, Warn: a.warn}
@@ -160,7 +178,12 @@ func (a *app) batch() *cobra.Command {
 					s, err := config.Resolve(flags, item.Settings)
 					if err == nil {
 						var result core.Generation
-						result, err = eng.Generate(cmd.Context(), s, item.Text, core.Options{DryRun: f.dryRun, NoCache: f.noCache})
+						result, err = eng.Generate(cmd.Context(), s, item.Text, core.Options{
+							DryRun:   f.dryRun,
+							NoCache:  f.noCache,
+							Turns:    item.Turns,
+							Speakers: item.Speakers,
+						})
 						if err == nil {
 							r.Success = true
 							r.Data = &result

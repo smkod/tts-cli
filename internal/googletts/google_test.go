@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	pb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
 	"github.com/smkod/tts-cli/internal/core"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
@@ -39,5 +40,16 @@ func TestClassification(t *testing.T) {
 				t.Fatalf("wrong or unsafe classification: %+v", p)
 			}
 		})
+	}
+}
+
+func TestBuildSynthesisInputMarkupRouting(t *testing.T) {
+	plain := buildSynthesisInput("Hello world")
+	if _, ok := plain.InputSource.(*pb.SynthesisInput_Text); !ok {
+		t.Fatalf("expected SynthesisInput_Text for plain text, got %T", plain.InputSource)
+	}
+	markup := buildSynthesisInput("Hello [pause short] world")
+	if m, ok := markup.InputSource.(*pb.SynthesisInput_Markup); !ok || m.Markup != "Hello [pause short] world" {
+		t.Fatalf("expected SynthesisInput_Markup for pause tag, got %T", markup.InputSource)
 	}
 }

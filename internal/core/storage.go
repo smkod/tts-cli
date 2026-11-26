@@ -14,6 +14,10 @@ import (
 
 const maxAudio = 32 << 20
 
+func ValidAudio(b []byte, format string) bool {
+	return validAudio(b, format)
+}
+
 func validAudio(b []byte, format string) bool {
 	if len(b) > maxAudio {
 		return false
@@ -151,6 +155,14 @@ func storeCache(path string, data []byte) error {
 	copy(b, sum[:])
 	copy(b[len(sum):], data)
 	return publish(path, b, false)
+}
+
+func CheckOutput(path string) error {
+	return checkOutput(path)
+}
+
+func WriteOutput(path string, data []byte) error {
+	return writeOutput(path, data)
 }
 
 func checkOutput(path string) error {

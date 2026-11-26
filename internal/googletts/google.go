@@ -66,11 +66,18 @@ func (g *Google) Close() error {
 
 func noRetry() gax.Retryer { return nil }
 
+func buildSynthesisInput(text string) *pb.SynthesisInput {
+	if core.HasGoogleMarkup(text) {
+		return &pb.SynthesisInput{InputSource: &pb.SynthesisInput_Markup{Markup: text}}
+	}
+	return &pb.SynthesisInput{InputSource: &pb.SynthesisInput_Text{Text: text}}
+}
+
 func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error) {
 	var encoder string
 	if r.Format == core.FormatMP3 {
 		var err error
-		encoder, err = findFFmpeg(ctx)
+		encoder, err = FindFFmpeg(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -80,7 +87,7 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		return nil, err
 	}
 	res, err := c.SynthesizeSpeech(ctx, &pb.SynthesizeSpeechRequest{
-		Input:       &pb.SynthesisInput{InputSource: &pb.SynthesisInput_Text{Text: r.Text}},
+		Input:       buildSynthesisInput(r.Text),
 		Voice:       &pb.VoiceSelectionParams{LanguageCode: r.Language, Name: r.Voice},
 		AudioConfig: &pb.AudioConfig{AudioEncoding: pb.AudioEncoding_LINEAR16},
 	}, gax.WithRetry(noRetry))
@@ -88,7 +95,7 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		return nil, classify(err, true)
 	}
 	if r.Format == core.FormatMP3 {
-		return encodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)
+		return EncodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)
 	}
 	return res.GetAudioContent(), nil
 }

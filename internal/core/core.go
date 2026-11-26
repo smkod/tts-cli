@@ -163,13 +163,72 @@ func canonicalLocale(s string) string {
 	}
 	return strings.Join(parts, "-")
 }
+
+// GeminiVoiceName returns the short prebuilt voice name for Gemini TTS (e.g. "Kore").
+func GeminiVoiceName(voice string) string {
+	if v, ok := ParseVoice(voice); ok && len(v.Alias) > 0 {
+		return strings.ToUpper(v.Alias[:1]) + v.Alias[1:]
+	}
+	return voice
+}
+
+// ValidLocale reports whether s is a valid BCP-47 locale tag such as en-US.
+func ValidLocale(s string) (string, bool) {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if !validLocale(lower) {
+		return "", false
+	}
+	return canonicalLocale(lower), true
+}
+
 func invalidVoice() *Problem {
 	return Fail("INVALID_VOICE", "Unknown Chirp 3 HD voice or locale. Check the voice list for supported aliases.", false)
 }
 
+// Turn represents one sequential segment in a multi-turn or multi-speaker Gemini TTS request.
+type Turn struct {
+	Text    string `json:"text"`
+	Style   string `json:"style,omitempty"`
+	Speaker string `json:"speaker,omitempty"`
+}
+
+// VoiceDesignRequest describes a prompt-based custom Gemini voice creation request.
+type VoiceDesignRequest struct {
+	Prompt       string
+	DisplayName  string
+	Gender       string
+	LanguageCode string
+	Model        string
+	KeyTier      string
+	Format       string
+	Bitrate      int
+	ConfigDir    string
+	CacheDir     string
+	Warn         func(string) `json:"-"`
+}
+
+// VoiceDesignResult describes a newly created custom Gemini voice and optional sample audio.
+type VoiceDesignResult struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	DisplayName  string `json:"display_name,omitempty"`
+	Model        string `json:"model"`
+	LanguageCode string `json:"language_code,omitempty"`
+	Gender       string `json:"gender,omitempty"`
+	ExpireTime   string `json:"expire_time,omitempty"`
+	SampleFile   string `json:"sample_file,omitempty"`
+	SampleAudio  []byte `json:"-"`
+}
+
 type Request struct {
-	Text, Provider, Language, Voice, Format string
-	Bitrate                                 int
+	Text, Provider, Model, KeyTier, Language, Voice, Format string
+	Style                                                   string
+	LanguagePinned                                          bool
+	Turns                                                   []Turn
+	Speakers                                                map[string]string
+	ConfigDir, CacheDir                                     string
+	Bitrate                                                 int
+	Warn                                                    func(string) `json:"-"`
 }
 
 const (
@@ -189,20 +248,27 @@ type Backend interface {
 	Close() error
 }
 type Generation struct {
-	Bitrate     int    `json:"bitrate,omitempty"`
-	Format      string `json:"format"`
-	File        string `json:"file"`
-	Provider    string `json:"provider"`
-	Voice       string `json:"voice"`
-	Language    string `json:"language"`
-	Cached      bool   `json:"cached"`
-	Characters  int    `json:"characters"`
-	DryRun      bool   `json:"dry_run,omitempty"`
-	CacheStatus string `json:"cache_status"`
+	Bitrate      int      `json:"bitrate,omitempty"`
+	Format       string   `json:"format"`
+	File         string   `json:"file"`
+	Provider     string   `json:"provider"`
+	Model        string   `json:"model,omitempty"`
+	Voice        string   `json:"voice"`
+	Language     string   `json:"language"`
+	Style        string   `json:"style,omitempty"`
+	Turns        int      `json:"turns,omitempty"`
+	Speakers     []string `json:"speakers,omitempty"`
+	DetectedTags []string `json:"detected_tags,omitempty"`
+	Cached       bool     `json:"cached"`
+	Characters   int      `json:"characters"`
+	DryRun       bool     `json:"dry_run,omitempty"`
+	CacheStatus  string   `json:"cache_status"`
 }
 type Options struct {
 	Output          string
 	NoCache, DryRun bool
+	Turns           []Turn
+	Speakers        map[string]string
 }
 type pending struct {
 	done   chan struct{}
@@ -225,7 +291,11 @@ func ValidateText(text string) error {
 	return nil
 }
 func cacheKey(r Request) string {
-	fields := []any{"v1", r.Text, r.Provider, "Chirp3-HD", r.Voice, r.Language, r.Format}
+	family := "Chirp3-HD"
+	if r.Provider == ProviderGemini {
+		family = r.Model
+	}
+	fields := []any{"v1", r.Text, r.Provider, family, r.Voice, r.Language, r.Format}
 	if r.Format == FormatMP3 {
 		bitrate := r.Bitrate
 		if bitrate == 0 {
@@ -233,24 +303,196 @@ func cacheKey(r Request) string {
 		}
 		fields = append(fields, "ffmpeg-libmp3lame-v1", bitrate)
 	}
+	if r.Style != "" {
+		fields = append(fields, "style", r.Style)
+	}
+	if r.LanguagePinned && r.Provider == ProviderGemini {
+		fields = append(fields, "lang_pinned", true)
+	}
+	if len(r.Turns) > 0 {
+		fields = append(fields, "turns", r.Turns)
+	}
+	if len(r.Speakers) > 0 {
+		keys := make([]string, 0, len(r.Speakers))
+		for k := range r.Speakers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		pairs := make([][2]string, len(keys))
+		for i, k := range keys {
+			pairs[i] = [2]string{k, r.Speakers[k]}
+		}
+		fields = append(fields, "speakers", pairs)
+	}
 	b, _ := json.Marshal(fields)
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
 
-func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Options) (Generation, error) {
-	if err := ValidateText(text); err != nil {
-		return Generation{}, err
+func resolveSingleGeminiVoice(lang, choice string) (string, error) {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return "", Fail("INVALID_VOICE", "Speaker voice must not be blank.", false)
 	}
-	if s.Voice == "random" {
-		voices := randomVoiceCandidates(s.Language)
+	if strings.EqualFold(choice, "random") {
+		poolLang := lang
+		if poolLang == "" || poolLang == LanguageAuto {
+			poolLang = "en-US"
+		}
+		voices := randomVoiceCandidates(poolLang)
+		if len(voices) == 0 {
+			voices = randomVoiceCandidates("en-US")
+		}
+		if len(voices) == 0 {
+			return "", invalidVoice()
+		}
+		return GeminiVoiceName(voices[rand.IntN(len(voices))].Name), nil
+	}
+	poolLang := lang
+	if poolLang == LanguageAuto {
+		poolLang = ""
+	}
+	if _, v, err := ResolveVoice(poolLang, choice); err == nil {
+		return GeminiVoiceName(v), nil
+	}
+	return choice, nil
+}
+
+func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Options) (Generation, error) {
+	isScript := len(o.Turns) > 0
+	if !isScript {
+		if err := ValidateText(text); err != nil {
+			return Generation{}, err
+		}
+	} else if text != "" {
+		return Generation{}, Fail("INVALID_INPUT", "Provide either plain text or structured turns, not both.", false)
+	}
+	if s.Provider != ProviderGemini {
+		if s.Style != "" {
+			return Generation{}, Fail("INVALID_CONFIG", "Style direction is only supported with the gemini provider.", false)
+		}
+		if isScript || len(o.Speakers) > 0 {
+			return Generation{}, Fail("INVALID_INPUT", "Multi-turn and multi-speaker scripts are only supported with the gemini provider.", false)
+		}
+		if s.Language == LanguageAuto {
+			return Generation{}, Fail("INVALID_CONFIG", "Automatic language detection (auto) is only supported with the gemini provider.", false)
+		}
+	} else if len(o.Speakers) > 0 && !isScript {
+		return Generation{}, Fail("INVALID_INPUT", "Multi-speaker mapping requires structured turns.", false)
+	}
+
+	var (
+		turns        []Turn
+		speakers     map[string]string
+		speakerNames []string
+		detectedTags []string
+		seenTags     = map[string]bool{}
+		totalBytes   int
+		totalChars   int
+	)
+	addTags := func(tags []string) {
+		for _, t := range tags {
+			if !seenTags[t] {
+				seenTags[t] = true
+				detectedTags = append(detectedTags, t)
+			}
+		}
+	}
+
+	if len(o.Speakers) > 0 {
+		if len(o.Speakers) > 2 {
+			return Generation{}, Fail("INVALID_INPUT", "Gemini multi-speaker synthesis supports at most 2 speakers.", false)
+		}
+		speakers = make(map[string]string, len(o.Speakers))
+		for rawAlias, rawVoice := range o.Speakers {
+			alias := strings.TrimSpace(rawAlias)
+			if alias == "" {
+				return Generation{}, Fail("INVALID_INPUT", "Speaker aliases must not be blank.", false)
+			}
+			if _, dup := speakers[alias]; dup {
+				return Generation{}, Fail("INVALID_INPUT", "Duplicate speaker alias after trimming whitespace.", false)
+			}
+			resolvedVoice, err := resolveSingleGeminiVoice(s.Language, rawVoice)
+			if err != nil {
+				return Generation{}, err
+			}
+			speakers[alias] = resolvedVoice
+			speakerNames = append(speakerNames, alias)
+		}
+		sort.Strings(speakerNames)
+		var voiceParts []string
+		for _, alias := range speakerNames {
+			voiceParts = append(voiceParts, alias+"="+speakers[alias])
+		}
+		s.Voice = strings.Join(voiceParts, ",")
+	} else if s.Voice == "random" {
+		poolLang := s.Language
+		if poolLang == LanguageAuto {
+			poolLang = "en-US"
+		}
+		voices := randomVoiceCandidates(poolLang)
 		if len(voices) == 0 {
 			return Generation{}, invalidVoice()
 		}
 		v := voices[rand.IntN(len(voices))]
-		s.Language, s.Voice = v.Language, v.Name
+		if s.Language != LanguageAuto {
+			s.Language = v.Language
+		}
+		s.Voice = v.Name
+		if s.Provider == ProviderGemini {
+			s.Voice = GeminiVoiceName(v.Name)
+		}
 	}
-	r := Request{Text: text, Provider: s.Provider, Language: s.Language, Voice: s.Voice, Format: s.Format, Bitrate: s.Bitrate}
+
+	if isScript {
+		turns = make([]Turn, len(o.Turns))
+		for i, t := range o.Turns {
+			if err := ValidateText(t.Text); err != nil {
+				return Generation{}, err
+			}
+			totalBytes += len(t.Text)
+			if totalBytes > MaxTextBytes {
+				return Generation{}, Fail("INVALID_TEXT", "Combined turns text must be no more than 5,000 UTF-8 bytes.", false)
+			}
+			tags, err := ValidateInlineModifiers(s.Provider, t.Text)
+			if err != nil {
+				return Generation{}, err
+			}
+			addTags(tags)
+			totalChars += utf8.RuneCountInString(t.Text)
+			style := strings.TrimSpace(t.Style)
+			if style == "" {
+				style = s.Style
+			}
+			speaker := strings.TrimSpace(t.Speaker)
+			if len(speakers) > 0 {
+				if speaker == "" {
+					return Generation{}, Fail("INVALID_INPUT", "Every turn in a multi-speaker script must specify a speaker.", false)
+				}
+				if _, ok := speakers[speaker]; !ok {
+					return Generation{}, Fail("INVALID_INPUT", fmt.Sprintf("Turn references unknown speaker %q.", speaker), false)
+				}
+			} else if speaker != "" {
+				return Generation{}, Fail("INVALID_INPUT", "Turn specifies a speaker, but no speakers mapping was provided.", false)
+			}
+			turns[i] = Turn{Text: t.Text, Style: style, Speaker: speaker}
+		}
+	} else {
+		tags, err := ValidateInlineModifiers(s.Provider, text)
+		if err != nil {
+			return Generation{}, err
+		}
+		addTags(tags)
+		totalChars = utf8.RuneCountInString(text)
+	}
+
+	r := Request{
+		Text: text, Provider: s.Provider, Model: s.Model, KeyTier: s.KeyTier,
+		Language: s.Language, LanguagePinned: s.LanguagePinned, Voice: s.Voice,
+		Style: s.Style, Turns: turns, Speakers: speakers,
+		Format: s.Format, Bitrate: s.Bitrate,
+		ConfigDir: s.ConfigDir, CacheDir: s.CacheDir, Warn: e.Warn,
+	}
 	if r.Format != FormatWAV && r.Format != FormatMP3 {
 		return Generation{}, Fail("INVALID_CONFIG", "Format must be wav or mp3.", false)
 	}
@@ -268,7 +510,11 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 	if samePath(out, p) {
 		return Generation{}, Fail("INVALID_INPUT", "Output conflicts with the cache entry.", false)
 	}
-	result := Generation{Format: r.Format, File: out, Provider: r.Provider, Voice: r.Voice, Language: r.Language, Characters: utf8.RuneCountInString(text), DryRun: o.DryRun}
+	result := Generation{
+		Format: r.Format, File: out, Provider: r.Provider, Model: r.Model, Voice: r.Voice,
+		Language: r.Language, Style: r.Style, Turns: len(turns), Speakers: speakerNames,
+		DetectedTags: detectedTags, Characters: totalChars, DryRun: o.DryRun,
+	}
 	if r.Format == FormatMP3 {
 		result.Bitrate = r.Bitrate
 		if result.Bitrate == 0 {

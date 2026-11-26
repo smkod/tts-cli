@@ -14,9 +14,26 @@ import (
 )
 
 type mockBackend struct {
-	mu       sync.Mutex
-	requests []core.Request
-	lists    int
+	mu         sync.Mutex
+	requests   []core.Request
+	designReqs []core.VoiceDesignRequest
+	lists      int
+}
+
+func (m *mockBackend) DesignVoice(_ context.Context, req core.VoiceDesignRequest) (core.VoiceDesignResult, error) {
+	m.mu.Lock()
+	m.designReqs = append(m.designReqs, req)
+	m.mu.Unlock()
+	wav := []byte("RIFF\x26\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00")
+	return core.VoiceDesignResult{
+		ID:           "voice_custom123",
+		Name:         "voices/voice_custom123",
+		DisplayName:  req.DisplayName,
+		Model:        req.Model,
+		LanguageCode: req.LanguageCode,
+		Gender:       req.Gender,
+		SampleAudio:  wav,
+	}, nil
 }
 
 func (m *mockBackend) Synthesize(_ context.Context, r core.Request) ([]byte, error) {
@@ -76,6 +93,7 @@ func TestCommandAliases(t *testing.T) {
 	}{
 		{"generate", "generate Hello --voice kore --dry-run", "g Hello --voice kore --dry-run"},
 		{"voices", "voices list --lang it-IT", "v ls --lang it-IT"},
+		{"modifiers", "modifiers list --provider gemini", "m ls --provider gemini"},
 		{"providers", "providers list", "p ls"},
 		{"capabilities", "capabilities", "cap"},
 		{"config", "config show", "cfg sh"},
@@ -255,5 +273,87 @@ func TestBatchPartialFailureAndCache(t *testing.T) {
 	r = parse(out)
 	if code != 3 || !r.Items[0].Data.Cached || !r.Items[2].Data.Cached || diag != "" || len(m.requests) != 4 {
 		t.Fatalf("repeat batch: %d %s %q", code, out, diag)
+	}
+}
+
+func TestGeminiModifiersStyleScriptAndVoiceDesign(t *testing.T) {
+	dir := workspace(t)
+	m := &mockBackend{}
+
+	// 1. Local-first modifier validation rejects bad/mismatched tags before touching backend.
+	for _, args := range [][]string{
+		{"generate", "Hello <sniff>", "--provider", "gemini", "--json"},
+		{"generate", "Hello [laughs]", "--provider", "gemini", "--json"},
+		{"generate", "Hello <laugh>", "--provider", "google", "--json"},
+		{"generate", "Hello [pause medium]", "--provider", "google", "--json"},
+		{"generate", "Hello", "--provider", "google", "--style", "warm", "--json"},
+		{"generate", "Hello", "--provider", "google", "--lang", "auto", "--json"},
+	} {
+		code, out, _ := runTest(m, args...)
+		if code != 2 {
+			t.Fatalf("expected exit 2 for %v, got %d: %s", args, code, out)
+		}
+	}
+	if len(m.requests) != 0 {
+		t.Fatalf("invalid local inputs contacted backend: %d", len(m.requests))
+	}
+
+	// 2. Valid Gemini style + inline tags + auto language.
+	code, out, _ := runTest(m, "generate", "Wait... <short pause> who is there? <gasp>",
+		"--provider", "gemini", "--voice", "kore", "--style", "whispered, nervous", "--lang", "auto", "--format", "wav", "--json")
+	if code != 0 || !strings.Contains(out, `"style":"whispered, nervous"`) || !strings.Contains(out, `"detected_tags":["short pause","gasp"]`) {
+		t.Fatalf("gemini styled generate failed: %d %s", code, out)
+	}
+	if len(m.requests) != 1 || m.requests[0].LanguagePinned || m.requests[0].Style != "whispered, nervous" {
+		t.Fatalf("unexpected backend request: %+v", m.requests)
+	}
+
+	// 3. Script mode (multi-speaker dialogue).
+	scriptPath := filepath.Join(dir, "dialogue.json")
+	scriptJSON := `{"speakers":{"Host":"puck","Guest":"kore"},"turns":[{"speaker":"Host","style":"warm","text":"Hello! <short pause>"},{"speaker":"Guest","text":"<sigh> Hi."}]}`
+	if err := os.WriteFile(scriptPath, []byte(scriptJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runTest(m, "generate", "--script", scriptPath, "--provider", "gemini", "--format", "wav", "--json")
+	if code != 0 || !strings.Contains(out, `"turns":2`) || !strings.Contains(out, `"speakers":["Guest","Host"]`) {
+		t.Fatalf("script generate failed: %d %s", code, out)
+	}
+	if len(m.requests) != 2 || len(m.requests[1].Turns) != 2 || m.requests[1].Speakers["Host"] != "Puck" {
+		t.Fatalf("unexpected script backend request: %+v", m.requests[1])
+	}
+
+	// Script validation conflicts.
+	code, _, _ = runTest(m, "generate", "extra text", "--script", scriptPath, "--provider", "gemini", "--json")
+	if code != 2 {
+		t.Fatalf("expected exit 2 when combining text and --script, got %d", code)
+	}
+	code, _, _ = runTest(m, "generate", "--script", scriptPath, "--provider", "gemini", "--voice", "kore", "--json")
+	if code != 2 {
+		t.Fatalf("expected exit 2 when combining --voice and multi-speaker script, got %d", code)
+	}
+
+	// 4. Batch turns + style item alongside invalid mixed item.
+	batchPath := filepath.Join(dir, "expressive-batch.json")
+	batchJSON := `{"items":[{"id":"styled","provider":"gemini","voice":"kore","style":"cheerful","text":"Hi <laugh>"},{"id":"dialogue","provider":"gemini","speakers":{"A":"puck","B":"kore"},"turns":[{"speaker":"A","text":"Ping"},{"speaker":"B","text":"Pong"}]},{"id":"bad","provider":"gemini","text":"x","turns":[{"text":"y"}]}]}`
+	if err := os.WriteFile(batchPath, []byte(batchJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runTest(m, "batch", batchPath, "--format", "wav")
+	if code != 3 || !strings.Contains(out, `"succeeded":2,"failed":1`) {
+		t.Fatalf("unexpected expressive batch result: %d %s", code, out)
+	}
+
+	// 5. Voice design local validation + execution.
+	code, _, _ = runTest(m, "voices", "design", "Warm narrator", "--gender", "unknown", "--json")
+	if code != 2 || len(m.designReqs) != 0 {
+		t.Fatalf("expected local rejection for invalid gender, got %d", code)
+	}
+	sampleOut := filepath.Join(dir, "sample.wav")
+	code, out, _ = runTest(m, "voices", "design", "Warm narrator", "--name", "Narrator", "--lang", "en-US", "--gender", "male", "--format", "wav", "-o", sampleOut, "--json")
+	if code != 0 || !strings.Contains(out, `"id":"voice_custom123"`) || len(m.designReqs) != 1 {
+		t.Fatalf("voice design failed: %d %s", code, out)
+	}
+	if _, err := os.Stat(sampleOut); err != nil {
+		t.Fatalf("expected sample audio file at %s: %v", sampleOut, err)
 	}
 }

@@ -1,8 +1,8 @@
 # tts-cli
 
 A lightweight text-to-speech CLI for Windows, macOS, and Linux. It generates WAV or MP3
-audio using Google Chirp 3 HD, with local caching, batch manifests, and stable JSON
-output. It does not depend on Anki.
+audio using Google Chirp 3 HD or Gemini 3.8 TTS, with local caching, batch manifests,
+expressive style/modifier validation, and stable JSON output. It does not depend on Anki.
 
 ## Install and authenticate
 
@@ -63,9 +63,20 @@ identity instead of storing keys in the configuration file. The online doctor
 checks API access without synthesizing audio; it does not prove synthesis
 permission or available quota.
 
+### Configure Gemini 3.8 TTS access
+
+For `--provider gemini` (`gemini-3.8-flash-tts` and `gemini-3.8-flash-lite-tts`),
+configure one or more Gemini API keys using `ttsi keys add` or `GEMINI_API_KEY`:
+
+```sh
+ttsi keys add --tier free YOUR_FREE_KEY
+ttsi keys add --tier paid YOUR_PAID_KEY
+ttsi keys list
+```
+
 ## Commands
 
-Start with one MP3. Once you've configured Google credentials, run:
+Start with one MP3. Once you've configured credentials, run:
 
 ```sh
 ttsi "Hello, how are you?" -o hello.mp3
@@ -73,27 +84,37 @@ ttsi "Hello, how are you?" -o hello.mp3
 
 | Command | Shortcut | What it does |
 | --- | --- | --- |
-| `ttsi generate <text>` | `ttsi g <text>` | Turns one text argument into one audio file. Use `--output` (`-o`) to name the file. |
+| `ttsi generate [<text>]` | `ttsi g [<text>]` | Turns one text argument or `--script <file>` into one audio file. Use `--output` (`-o`) to name the file and `--style` for Gemini delivery direction. |
 | `ttsi batch <file>` | `ttsi b <file>` | Reads a [JSON batch file](#batch-and-json-contract-v1), generates audio files, and prints a JSON report to stdout even without `--json`. Use `--output-dir` for the destination and `--jobs` for parallelism. |
-| `ttsi voices list` | `ttsi v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google. |
-| `ttsi providers list` | `ttsi p ls` | Lists implemented providers. Currently only `google` is available. |
+| `ttsi voices list` | `ttsi v ls` | Lists Chirp 3 HD voice IDs and aliases from the bundled catalog. Use `--lang` to filter by exact locale or `--online` to query Google or Gemini. |
+| `ttsi voices design <description>` | — | Creates a custom Gemini 3.8 TTS prompted voice from a natural-language description and optionally saves its preview audio (`--output`). |
+| `ttsi modifiers list` | `ttsi m ls` | Lists supported inline vocal tags for Gemini 3.8 TTS (`<...>`) and pause markup for Chirp 3 HD (`[pause...]`). |
+| `ttsi providers list` | `ttsi p ls` | Lists implemented providers (`google` and `gemini`). |
+| `ttsi keys add/list/remove/reset` | `ttsi k ...` | Manages Gemini API keys and free/paid tier failover cooldowns. |
 | `ttsi login google [--project ID]` | — | Signs in using Google Cloud CLI and optionally sets the ADC quota project. |
 | `ttsi agent-guide` | — | Prints bundled instructions for AI agents without network or credentials. Add `--json` for structured output. |
 | `ttsi capabilities` | `ttsi cap` | Summarizes supported formats and limits. Use `--json` for details such as locales and supported parameters. |
 | `ttsi config show` | `ttsi cfg sh` | Shows the config path and effective settings. With `--json`, it also shows saved YAML values separately. |
 | `ttsi config set <key=value>...` | `ttsi cfg s <key=value>...` | Validates and saves one or more settings together, for example `ttsi config set language=it-IT voice=kore`. |
 | `ttsi config unset <key>...` | `ttsi cfg u <key>...` | Removes saved settings, for example `ttsi config unset language voice`. Environment overrides and defaults still apply. |
-| `ttsi doctor` | `ttsi d` | Checks config, directory writability, and local credential hints. Add `--online` to probe Google without generating audio. |
+| `ttsi doctor` | `ttsi d` | Checks config, directory writability, and local credential hints. Add `--online` to probe Google or Gemini without generating audio. |
 | `ttsi help [command]` | — | Shows help. Use `ttsi --help` for the top-level list or, for example, `ttsi batch --help` for flags. |
 | `ttsi completion <shell>` | — | Generates a completion script for `bash`, `zsh`, `fish`, or `powershell`. See `ttsi completion --help`. |
 
-Both `generate` and `batch` accept `--lang`, `--voice`, `--provider`,
-`--format`, `--cache-dir`, `--no-cache`, and `--dry-run`. The global flags are
-`--config PATH` to select a YAML file and `--json` for machine-readable results.
+Both `generate` and `batch` accept `--lang`, `--voice`, `--provider`, `--model`,
+`--key-tier`, `--style`, `--format`, `--cache-dir`, `--no-cache`, and `--dry-run`.
+`generate` also accepts `--script <file>` for multi-turn or two-speaker Gemini
+scripts. The global flags are `--config PATH` to select a YAML file and `--json`
+for machine-readable results.
 
 ```sh
 ttsi generate "Come stai?" --lang it-IT --voice kore --output italian.mp3
 ttsi generate "Come stai?" --lang it-IT --format wav -o italian.wav
+ttsi generate "Wait... <short pause> did you hear that? <gasp>" --provider gemini --voice kore --style "whispered, nervous" -o suspense.mp3
+ttsi generate --provider gemini --script dialogue.json -o podcast.mp3
+ttsi generate "Hello there, [pause short] how can I help?" -o paused.mp3
+ttsi voices design "Warm storyteller in his 50s" --name "Narrator" --lang en-US --gender male -o preview.wav
+ttsi modifiers list --provider gemini
 ttsi config set format=wav
 ttsi generate --dry-run --json -- "-text beginning with a dash"
 ttsi batch sentences.json --jobs 4 --output-dir audio
@@ -119,10 +140,17 @@ Offline listing is not a live availability guarantee.
 The CLI accepts nonblank plain UTF-8 text, up to
 [5,000 bytes](https://docs.cloud.google.com/text-to-speech/quotas) per item.
 It preserves the original text, including surrounding whitespace.
+With `--provider gemini`, you can combine `--style` (sustained delivery direction),
+inline angle-bracket vocal modifiers (`<short pause>`, `<laugh>`, `<sigh>`, `<gasp>`,
+etc. — run `ttsi modifiers list --provider gemini`), `--lang auto` for automatic
+multilingual detection, and `--script` JSON files with multi-turn or two-speaker
+`turns` and `speakers`. With `--provider google`, `[pause]`, `[pause short]`, and
+`[pause long]` are sent via Chirp 3 HD markup. Invalid or provider-mismatched tags
+are rejected locally before calling any remote API.
 Synthesis uses the synchronous global endpoint. MP3 at 96 kbps is the default and is the most widely compatible audio format
 across [Anki clients](https://docs.ankiweb.net/media.html). WAV (`LINEAR16`,
-uncompressed 16-bit PCM) uses the native sample rate. SSML, pitch, rate, and other encodings are not exposed, including
-[Google's preview controls](https://docs.cloud.google.com/text-to-speech/docs/chirp3-hd).
+uncompressed 16-bit PCM) uses the native sample rate. SSML, pitch, speaking rate,
+and LLM sampling parameters (`temperature`, `seed`, `systemInstruction`) are not exposed.
 
 ## Configuration and files
 
@@ -139,8 +167,11 @@ can leave a `.lock` file; remove it only after confirming no writer is active.
 | YAML key | Environment | Default |
 | --- | --- | --- |
 | `provider` | `TTS_PROVIDER` | `google` |
-| `language` | `TTS_LANGUAGE` | `en-US` (or the locale of a full voice ID) |
+| `model` | `TTS_MODEL` | `gemini-3.8-flash-tts` (when `provider=gemini`) |
+| `key_tier` | `TTS_KEY_TIER` | `auto` (`auto`, `free`, or `paid`) |
+| `language` | `TTS_LANGUAGE` | `en-US` (or `auto` for Gemini 3.8 auto-detection) |
 | `voice` | `TTS_VOICE` | `random` |
+| `style` | `TTS_STYLE` | Unset (Gemini 3.8 sustained delivery direction) |
 | `format` | `TTS_FORMAT` | `mp3` (`wav` is also supported) |
 | `output_dir` | `TTS_OUTPUT_DIR` | Current directory |
 | `cache_dir` | `TTS_CACHE_DIR` | `tts` under the OS user cache directory |
@@ -176,12 +207,14 @@ restore caching. Cache files are not automatically evicted.
 A batch file is UTF-8 JSON up to 32 MiB:
 
 ```json
-{"items":[{"id":"note-101","text":"How are you?"},{"id":"note-102","text":"Come stai?","language":"it-IT","voice":"kore"}]}
+{"items":[{"id":"note-101","text":"How are you?"},{"id":"note-102","text":"Come stai?","language":"it-IT","voice":"kore"},{"id":"dialogue-103","provider":"gemini","speakers":{"Host":"puck","Guest":"kore"},"turns":[{"speaker":"Host","style":"warm","text":"Welcome! <short pause>"},{"speaker":"Guest","style":"tired","text":"<sigh> Thanks."}]}]}
 ```
 
-IDs must be nonempty and unique. Language, voice, and format are optional. Bad items do
-not prevent valid items from running. Transient synthesis failures are retried
-at most twice; permanent errors and hard quota failures are not retried.
+IDs must be nonempty and unique. Each item must provide either `text` or `turns`
+(never both). Language, voice, provider, model, key_tier, style, speakers,
+bitrate, and format are optional. Bad items do not prevent valid items from
+running. Transient synthesis failures are retried at most twice; permanent
+errors and hard quota failures are not retried.
 The batch always prints an ordered JSON manifest to stdout. To recover from
 exit 3, inspect each item's error, fix the cause, and resubmit failed IDs. A
 normal rerun can reuse cached successful audio.
@@ -195,13 +228,15 @@ top-level error. Doctor failures can include both check details and an error.
 
 | Operation | `data` |
 | --- | --- |
-| `generate` | `file` (absolute), `provider`, `voice`, `language`, `format`, `cached`, `characters` (Unicode code points), `cache_status` (`hit`, `miss`, `corrupt` for preview, or `bypassed`), and optional `dry_run` |
+| `generate` | `file` (absolute), `provider`, `model`, `voice`, `language`, `style`, `turns`, `speakers`, `detected_tags`, `format`, `cached`, `characters` (Unicode code points), `cache_status` (`hit`, `miss`, `corrupt` for preview, or `bypassed`), and optional `dry_run` |
 | `batch` | `items` (input order), `total`, `succeeded`, `failed`, optional `dry_run`; each item has `id`, `success` and either generation `data` or `error` |
-| `voices list` | `source` (`local` or `google`), `voices` (`name`, `language`, `alias`), and `catalog_date` for the snapshot |
+| `voices list` | `source` (`local`, `google`, or `gemini`), `voices` (`name`, `language`, `alias`), and `catalog_date` for the snapshot |
+| `voices design` | `id`, `name`, `display_name`, `model`, `language_code`, `gender`, `expire_time`, `sample_file` |
+| `modifiers list` | `tags` (`tag`, `name`, `category`, `provider`, `description`), `gemini_style_supported`, `gemini_style_examples` |
 | `providers list` | `providers` (provider IDs) |
 | `login google` | `provider` (Google provider ID), `quota_project` (explicit project ID, or empty if omitted) |
 | `agent-guide` | `guide_version`, `format` (`markdown`), `instructions` (bundled usage guide) |
-| `capabilities` | `providers`, `default_provider`, `voice_family`, `languages`, `voices_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `default_output_format`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `batch`, `cache`, `dry_run` |
+| `capabilities` | `providers`, `default_provider`, `voice_family`, `gemini_models`, `key_tiers`, `languages`, `voices_command`, `modifiers_command`, `catalog_source`, `catalog_date`, `input_formats`, `output_formats`, `default_output_format`, `max_text_bytes`, `synthesis_parameters`, `unsupported_parameters`, `gemini_capabilities`, `google_capabilities`, `batch`, `cache`, `dry_run` |
 | `config show/set/unset` | `file`, `stored` (saved strings), `effective` (resolved settings) |
 | `doctor` | `checks` (`check`, `status`, `message`), `online` |
 

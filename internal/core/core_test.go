@@ -154,6 +154,81 @@ func TestCacheKey(t *testing.T) {
 	if cacheKey(r) == first {
 		t.Fatal("cache collapsed distinct source text")
 	}
+	g := Request{Format: FormatWAV, Text: "hello", Provider: ProviderGemini, Model: DefaultGeminiModel, Language: "en-US", Voice: "Kore"}
+	baseGemini := cacheKey(g)
+	g.Style = "whispered"
+	if cacheKey(g) == baseGemini {
+		t.Fatal("cache collapsed distinct style")
+	}
+	g.Style = ""
+	g.LanguagePinned = true
+	if cacheKey(g) == baseGemini {
+		t.Fatal("cache collapsed pinned vs unpinned language")
+	}
+	g.LanguagePinned = false
+	g.Turns = []Turn{{Text: "Hi", Speaker: "Host", Style: "warm"}}
+	g.Speakers = map[string]string{"Host": "Puck"}
+	if cacheKey(g) == baseGemini {
+		t.Fatal("cache collapsed turns and speakers")
+	}
+}
+
+func TestGeminiExpressiveAndScriptValidation(t *testing.T) {
+	ctx := context.Background()
+	s := testSettings(t)
+	s.Format = FormatWAV
+
+	var captured Request
+	e := &Engine{Provider: fakeProvider(func(_ context.Context, r Request) ([]byte, error) {
+		captured = r
+		return []byte("RIFF\x26\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\xc0\x5d\x00\x00\x80\xbb\x00\x00\x02\x00\x10\x00data\x02\x00\x00\x00\x00\x00"), nil
+	})}
+
+	// Reject Gemini-only features on google provider locally before synthesis.
+	badStyle := s
+	badStyle.Style = "cheerful"
+	if _, err := e.Generate(ctx, badStyle, "Hello", Options{}); err == nil || Public(err).Code != "INVALID_CONFIG" {
+		t.Fatalf("expected INVALID_CONFIG for google style, got %v", err)
+	}
+	if _, err := e.Generate(ctx, s, "", Options{Turns: []Turn{{Text: "Hi"}}}); err == nil || Public(err).Code != "INVALID_INPUT" {
+		t.Fatalf("expected INVALID_INPUT for google turns, got %v", err)
+	}
+
+	s.Provider = ProviderGemini
+	s.Model = DefaultGeminiModel
+	s.Voice = "Kore"
+	s.Style = "calm"
+
+	// Valid multi-speaker turns inherit settings style when turn style is empty.
+	g, err := e.Generate(ctx, s, "", Options{
+		Speakers: map[string]string{"Host": "puck", "Guest": "kore"},
+		Turns: []Turn{
+			{Speaker: "Host", Text: "Welcome! <short pause>"},
+			{Speaker: "Guest", Style: "tired", Text: "<sigh> Glad to be here."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Generate failed: %v", err)
+	}
+	if g.Turns != 2 || len(g.Speakers) != 2 || len(g.DetectedTags) != 2 || captured.Turns[0].Style != "calm" {
+		t.Fatalf("unexpected generation result: %+v / %+v", g, captured)
+	}
+
+	// Reject >2 speakers.
+	if _, err := e.Generate(ctx, s, "", Options{
+		Speakers: map[string]string{"A": "puck", "B": "kore", "C": "zephyr"},
+		Turns:    []Turn{{Speaker: "A", Text: "Hi"}},
+	}); err == nil || Public(err).Code != "INVALID_INPUT" {
+		t.Fatalf("expected error for >2 speakers, got %v", err)
+	}
+
+	// Reject unknown speaker reference.
+	if _, err := e.Generate(ctx, s, "", Options{
+		Speakers: map[string]string{"A": "puck", "B": "kore"},
+		Turns:    []Turn{{Speaker: "Unknown", Text: "Hi"}},
+	}); err == nil || Public(err).Code != "INVALID_INPUT" {
+		t.Fatalf("expected error for unknown speaker, got %v", err)
+	}
 }
 func TestCorruptCacheIsNotReused(t *testing.T) {
 	s := testSettings(t)
