@@ -1,0 +1,84 @@
+version: '3'
+
+vars:
+  BINARY_NAME: ttsi
+  MAIN_PKG: ./cmd/ttsi
+  BIN_DIR: bin
+
+tasks:
+  default:
+    desc: List available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  run:
+    desc: Run the CLI via go run (pass args after --)
+    cmds:
+      - go run {{.MAIN_PKG}} {{.CLI_ARGS}}
+
+  build:
+    desc: Build the ttsi binary into bin/
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -trimpath -o {{.BIN_DIR}}/{{.BINARY_NAME}}{{exeExt}} {{.MAIN_PKG}}
+
+  install:
+    desc: Install ttsi into GOBIN / GOPATH/bin
+    cmds:
+      - go install {{.MAIN_PKG}}
+
+  test:
+    desc: Run all Go tests
+    cmds:
+      - go test ./...
+
+  test:v:
+    desc: Run all Go tests with verbose output
+    cmds:
+      - go test -v ./...
+
+  test:race:
+    desc: Run all Go tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  test:cover:
+    desc: Run all Go tests with coverage summary
+    cmds:
+      - go test -cover ./...
+
+  fmt:
+    desc: Format all Go files with gofmt
+    cmds:
+      - gofmt -w .
+
+  fmt:check:
+    desc: Check that all Go files are formatted with gofmt
+    cmds:
+      - |
+        UNFORMATTED=$(gofmt -l .)
+        if [ -n "$UNFORMATTED" ]; then
+          echo "Unformatted files:"
+          echo "$UNFORMATTED"
+          exit 1
+        fi
+
+  vet:
+    desc: Run go vet across all packages
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: Run formatting check, go vet, and tests
+    deps: [fmt:check, vet, test]
+
+  tidy:
+    desc: Tidy go.mod and go.sum
+    cmds:
+      - go mod tidy
+
+  clean:
+    desc: Remove build and dist artifacts
+    cmds:
+      - rm -rf {{.BIN_DIR}} dist

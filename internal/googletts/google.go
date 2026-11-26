@@ -70,7 +70,7 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 	var encoder string
 	if r.Format == core.FormatMP3 {
 		var err error
-		encoder, err = findFFmpeg(ctx)
+		encoder, err = FindFFmpeg(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +88,7 @@ func (g *Google) Synthesize(ctx context.Context, r core.Request) ([]byte, error)
 		return nil, classify(err, true)
 	}
 	if r.Format == core.FormatMP3 {
-		return encodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)
+		return EncodeMP3(ctx, encoder, res.GetAudioContent(), r.Bitrate)
 	}
 	return res.GetAudioContent(), nil
 }

@@ -15,7 +15,7 @@ func TestLimitedBuffer(t *testing.T) {
 	}
 }
 func TestInvalidEncoderBitrate(t *testing.T) {
-	_, err := encodeMP3(context.Background(), "not-executed", nil, 97)
+	_, err := EncodeMP3(context.Background(), "not-executed", nil, 97)
 	if err == nil {
 		t.Fatal("accepted unsupported bitrate")
 	}

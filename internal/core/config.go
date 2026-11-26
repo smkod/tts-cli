@@ -14,20 +14,36 @@ import (
 const (
 	FormatWAV = "wav"
 	FormatMP3 = "mp3"
+
+	ProviderGoogle          = "google"
+	ProviderGemini          = "gemini"
+	DefaultGeminiModel      = "gemini-3.8-flash-tts"
+	GeminiFlashLiteTTSModel = "gemini-3.8-flash-lite-tts"
+	KeyTierAuto             = "auto"
+	KeyTierFree             = "free"
+	KeyTierPaid             = "paid"
 )
 
 type Settings struct {
 	Bitrate   int    `json:"bitrate" yaml:"bitrate"`
 	Format    string `json:"format" yaml:"format"`
 	Provider  string `json:"provider" yaml:"provider"`
+	Model     string `json:"model,omitempty" yaml:"model,omitempty"`
+	KeyTier   string `json:"key_tier,omitempty" yaml:"key_tier,omitempty"`
 	Language  string `json:"language" yaml:"language"`
 	Voice     string `json:"voice" yaml:"voice"`
 	OutputDir string `json:"output_dir" yaml:"output_dir"`
 	CacheDir  string `json:"cache_dir" yaml:"cache_dir"`
+	ConfigDir string `json:"-" yaml:"-"`
 	Jobs      int    `json:"jobs" yaml:"jobs"`
 }
 
-var Keys = []string{"provider", "language", "voice", "format", "output_dir", "cache_dir", "jobs", "bitrate"}
+var Keys = []string{"provider", "model", "key_tier", "language", "voice", "format", "output_dir", "cache_dir", "jobs", "bitrate"}
+
+// ValidGeminiModel reports whether m is a supported Gemini 3.8 TTS model ID.
+func ValidGeminiModel(m string) bool {
+	return m == DefaultGeminiModel || m == GeminiFlashLiteTTSModel
+}
 
 type Config struct {
 	Path     string
@@ -57,7 +73,7 @@ func ConfigPath(flag string) (string, bool, error) {
 
 func LoadConfig(path string, explicit, allowCreate bool) (Config, error) {
 	c := Config{Path: path, Stored: map[string]string{}, env: map[string]string{}, defaults: map[string]string{
-		"bitrate": "96", "format": FormatMP3, "provider": "google", "voice": "random", "output_dir": ".", "jobs": "4",
+		"bitrate": "96", "format": FormatMP3, "provider": ProviderGoogle, "key_tier": KeyTierAuto, "voice": "random", "output_dir": ".", "jobs": "4",
 	}}
 	if d, e := os.UserCacheDir(); e == nil {
 		c.defaults["cache_dir"] = filepath.Join(d, "tts")
@@ -120,12 +136,40 @@ func (c Config) Resolve(flags, item map[string]string) (Settings, error) {
 }
 func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 	get := func(k string) string { return setting(k, layers...) }
-	s := Settings{Format: strings.ToLower(get("format")), Provider: get("provider"), Language: get("language"), Voice: get("voice"), OutputDir: get("output_dir"), CacheDir: get("cache_dir")}
+	s := Settings{
+		Format:    strings.ToLower(get("format")),
+		Provider:  strings.ToLower(get("provider")),
+		Model:     strings.TrimSpace(get("model")),
+		KeyTier:   strings.ToLower(strings.TrimSpace(get("key_tier"))),
+		Language:  get("language"),
+		Voice:     get("voice"),
+		OutputDir: get("output_dir"),
+		CacheDir:  get("cache_dir"),
+	}
+	if c.Path != "" {
+		s.ConfigDir = filepath.Dir(c.Path)
+	}
 	if s.Format != FormatWAV && s.Format != FormatMP3 {
 		return s, Fail("INVALID_CONFIG", "Format must be wav or mp3.", false)
 	}
-	if s.Provider != "google" {
-		return s, Fail("INVALID_CONFIG", "The only supported provider is google.", false)
+	if s.Provider != ProviderGoogle && s.Provider != ProviderGemini {
+		return s, Fail("INVALID_CONFIG", "Supported providers are google and gemini.", false)
+	}
+	if s.KeyTier == "" {
+		s.KeyTier = KeyTierAuto
+	}
+	if s.KeyTier != KeyTierAuto && s.KeyTier != KeyTierFree && s.KeyTier != KeyTierPaid {
+		return s, Fail("INVALID_CONFIG", "Key tier must be auto, free, or paid.", false)
+	}
+	if s.Provider == ProviderGemini {
+		if s.Model == "" {
+			s.Model = DefaultGeminiModel
+		}
+		if !ValidGeminiModel(s.Model) {
+			return s, Fail("INVALID_CONFIG", "Supported Gemini TTS models are gemini-3.8-flash-tts and gemini-3.8-flash-lite-tts.", false)
+		}
+	} else {
+		s.Model = ""
 	}
 	for _, k := range []string{"language", "voice"} {
 		for _, m := range layers {
@@ -163,7 +207,15 @@ func (c Config) resolve(layers ...map[string]string) (Settings, error) {
 		s.Language, s.Voice = voices[0].Language, "random"
 		return s, nil
 	}
-	s.Language, s.Voice, err = ResolveVoice(s.Language, s.Voice)
+	lang, voice, err := ResolveVoice(s.Language, s.Voice)
+	if err != nil && s.Provider == ProviderGemini {
+		if strings.TrimSpace(s.Language) == "" {
+			s.Language = "en-US"
+		}
+		s.Voice = strings.TrimSpace(s.Voice)
+		return s, nil
+	}
+	s.Language, s.Voice = lang, voice
 	return s, err
 }
 

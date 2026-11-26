@@ -79,7 +79,7 @@ func decodeItem(raw json.RawMessage) (string, batchItem, bool) {
 			err := json.Unmarshal(value, &n)
 			item.Settings[k] = fmt.Sprint(n)
 			valid = valid && err == nil
-		case "language", "voice", "format":
+		case "language", "voice", "format", "provider", "model", "key_tier":
 			v, ok := jsonText(value)
 			item.Settings[k] = v
 			valid = valid && ok

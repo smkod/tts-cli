@@ -168,8 +168,10 @@ func invalidVoice() *Problem {
 }
 
 type Request struct {
-	Text, Provider, Language, Voice, Format string
-	Bitrate                                 int
+	Text, Provider, Model, KeyTier, Language, Voice, Format string
+	ConfigDir, CacheDir                                     string
+	Bitrate                                                 int
+	Warn                                                    func(string) `json:"-"`
 }
 
 const (
@@ -193,6 +195,7 @@ type Generation struct {
 	Format      string `json:"format"`
 	File        string `json:"file"`
 	Provider    string `json:"provider"`
+	Model       string `json:"model,omitempty"`
 	Voice       string `json:"voice"`
 	Language    string `json:"language"`
 	Cached      bool   `json:"cached"`
@@ -225,7 +228,11 @@ func ValidateText(text string) error {
 	return nil
 }
 func cacheKey(r Request) string {
-	fields := []any{"v1", r.Text, r.Provider, "Chirp3-HD", r.Voice, r.Language, r.Format}
+	family := "Chirp3-HD"
+	if r.Provider == ProviderGemini {
+		family = r.Model
+	}
+	fields := []any{"v1", r.Text, r.Provider, family, r.Voice, r.Language, r.Format}
 	if r.Format == FormatMP3 {
 		bitrate := r.Bitrate
 		if bitrate == 0 {
@@ -250,7 +257,11 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 		v := voices[rand.IntN(len(voices))]
 		s.Language, s.Voice = v.Language, v.Name
 	}
-	r := Request{Text: text, Provider: s.Provider, Language: s.Language, Voice: s.Voice, Format: s.Format, Bitrate: s.Bitrate}
+	r := Request{
+		Text: text, Provider: s.Provider, Model: s.Model, KeyTier: s.KeyTier,
+		Language: s.Language, Voice: s.Voice, Format: s.Format, Bitrate: s.Bitrate,
+		ConfigDir: s.ConfigDir, CacheDir: s.CacheDir, Warn: e.Warn,
+	}
 	if r.Format != FormatWAV && r.Format != FormatMP3 {
 		return Generation{}, Fail("INVALID_CONFIG", "Format must be wav or mp3.", false)
 	}
@@ -268,7 +279,7 @@ func (e *Engine) Generate(ctx context.Context, s Settings, text string, o Option
 	if samePath(out, p) {
 		return Generation{}, Fail("INVALID_INPUT", "Output conflicts with the cache entry.", false)
 	}
-	result := Generation{Format: r.Format, File: out, Provider: r.Provider, Voice: r.Voice, Language: r.Language, Characters: utf8.RuneCountInString(text), DryRun: o.DryRun}
+	result := Generation{Format: r.Format, File: out, Provider: r.Provider, Model: r.Model, Voice: r.Voice, Language: r.Language, Characters: utf8.RuneCountInString(text), DryRun: o.DryRun}
 	if r.Format == FormatMP3 {
 		result.Bitrate = r.Bitrate
 		if result.Bitrate == 0 {

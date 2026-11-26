@@ -12,7 +12,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 	c := Config{
 		Stored:   map[string]string{"language": "fr-FR", "format": FormatWAV, "jobs": "8"},
 		env:      map[string]string{"language": "de-DE", "format": FormatMP3},
-		defaults: map[string]string{"format": FormatMP3, "provider": "google", "voice": "kore", "output_dir": t.TempDir(), "cache_dir": t.TempDir(), "jobs": "4"},
+		defaults: map[string]string{"bitrate": "96", "format": FormatMP3, "provider": "google", "key_tier": KeyTierAuto, "voice": "kore", "output_dir": t.TempDir(), "cache_dir": t.TempDir(), "jobs": "4"},
 	}
 	for _, tc := range []struct {
 		name         string

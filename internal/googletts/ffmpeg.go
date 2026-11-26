@@ -27,7 +27,8 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func findFFmpeg(ctx context.Context) (string, error) {
+// FindFFmpeg locates ffmpeg and verifies that it includes libmp3lame.
+func FindFFmpeg(ctx context.Context) (string, error) {
 	name := "ffmpeg"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
@@ -61,7 +62,8 @@ func findFFmpeg(ctx context.Context) (string, error) {
 	return path, nil
 }
 
-func encodeMP3(ctx context.Context, path string, wav []byte, bitrate int) ([]byte, error) {
+// EncodeMP3 transcodes a WAV byte slice into MP3 at the requested bitrate.
+func EncodeMP3(ctx context.Context, path string, wav []byte, bitrate int) ([]byte, error) {
 	if bitrate == 0 {
 		bitrate = core.MP3BitrateKbps
 	}
