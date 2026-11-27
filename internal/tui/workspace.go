@@ -330,17 +330,52 @@ func (m model) View() string {
 	} else {
 		header += " · F1 Generate / F2 Usage / F3 Config"
 	}
-	status := safe(m.status)
-	footer := muted.Render("F1/F2/F3: workspace · Tab: focus · Ctrl+G: generate" +
-		" · Ctrl+P: preview · Esc: cancel · Ctrl+Q: quit")
+	statusText := safe(m.status)
+	status := ""
+	if statusText != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "236", Dark: "252"})
+		status = accent.Render("› ") + statusStyle.Render(statusText)
+	}
+	footerKey := lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "238", Dark: "250"})
+	footerSep := muted.Render(" · ")
+	renderFooter := func(pairs ...[2]string) string {
+		parts := make([]string, 0, len(pairs))
+		for _, pair := range pairs {
+			parts = append(parts, footerKey.Render(pair[0])+" "+muted.Render(pair[1]))
+		}
+		return strings.Join(parts, footerSep)
+	}
+	footer := renderFooter(
+		[2]string{"F1/F2/F3", "workspace"},
+		[2]string{"Tab", "focus"},
+		[2]string{"Ctrl+G", "generate"},
+		[2]string{"Ctrl+P", "preview"},
+		[2]string{"Esc", "cancel"},
+		[2]string{"Ctrl+Q", "quit"},
+	)
 	switch m.screen {
 	case "usage":
-		footer = muted.Render("F1: Generate · F3: Config · R: refresh · ↑/↓ PgUp/PgDn: scroll · Ctrl+Q: quit")
+		footer = renderFooter(
+			[2]string{"R", "refresh"},
+			[2]string{"↑/↓ PgUp/PgDn", "scroll"},
+			[2]string{"Ctrl+Q", "quit"},
+		)
 	case "config":
-		footer = muted.Render("Tab/↑/↓: field · ←/→: cycle · Ctrl+S: save · Ctrl+U: unset · Ctrl+R: reload · Ctrl+Q: quit")
+		footer = renderFooter(
+			[2]string{"Tab/↑/↓", "field"},
+			[2]string{"←/→", "cycle"},
+			[2]string{"Ctrl+U", "unset"},
+			[2]string{"Ctrl+Q", "quit"},
+		)
 	default:
 		if m.generateLayout() != generateTiny {
-			footer = muted.Render("Tab: next · Shift+Tab: back · Esc: cancel · Ctrl+Q: quit")
+			footer = renderFooter(
+				[2]string{"Tab", "next"},
+				[2]string{"Shift+Tab", "back"},
+				[2]string{"←/→", "cycle"},
+				[2]string{"Esc", "cancel"},
+				[2]string{"Ctrl+Q", "quit"},
+			)
 		}
 	}
 	// Fit terminal cells and reserve bottom status rows, prioritizing active controls.
@@ -353,6 +388,15 @@ func (m model) View() string {
 		lines = lines[:bodyHeight]
 	}
 	if m.height > 2 {
+		if len(lines) < bodyHeight {
+			for len(lines) < bodyHeight-1 {
+				lines = append(lines, "")
+			}
+			divider := lipgloss.NewStyle().
+				Foreground(lipgloss.AdaptiveColor{Light: "250", Dark: "238"}).
+				Render(strings.Repeat("─", max(1, m.width)))
+			lines = append(lines, divider)
+		}
 		lines = append(lines, status, footer)
 	}
 	if len(lines) > max(1, m.height) {

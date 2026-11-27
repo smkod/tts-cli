@@ -25,6 +25,9 @@ type Options struct {
 	LoadUsage  func(context.Context) (UsageSnapshot, error)
 	LoadConfig LoadConfigFunc
 	SaveConfig SaveConfigFunc
+	AddKey     AddKeyFunc
+	UpdateKey  UpdateKeyFunc
+	RemoveKey  RemoveKeyFunc
 }
 
 // Run owns the program and joins cancelled work before returning to its caller.
@@ -53,6 +56,7 @@ func Run(ctx context.Context, options Options, input io.Reader, output io.Writer
 		tea.WithInput(input),
 		tea.WithOutput(output),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	).Run()
 	cancel()
 	workers.Wait()
@@ -92,13 +96,23 @@ type model struct {
 	usageOffset          int
 	loadConfig           LoadConfigFunc
 	saveConfigFn         SaveConfigFunc
+	addKeyFn             AddKeyFunc
+	updateKeyFn          UpdateKeyFunc
+	removeKeyFn          RemoveKeyFunc
 	cfgSnapshot          ConfigSnapshot
 	cfgFields            []configField
+	cfgKeys              []configKeyItem
+	cfgAddingKey         bool
+	cfgNewKeyName        textinput.Model
+	cfgNewKeyTier        string
+	cfgNewKeySecret      textinput.Model
 	cfgFocus             int
 	cfgLoadID, cfgSaveID uint64
+	cfgKeyOpID           uint64
 	cfgLoaded            bool
 	cfgLoading           bool
 	cfgSaving            bool
+	cfgKeyBusy           bool
 	cfgError             string
 }
 
@@ -131,10 +145,22 @@ func newModel(ctx context.Context, options Options) model {
 	spin := spinner.New()
 	spin.Spinner = spinner.Dot
 	snapshot := defaultConfigSnapshot(s)
+	newKeyName := textinput.New()
+	newKeyName.Prompt = ""
+	newKeyName.Placeholder = "Optional (e.g. my-free)"
+	newKeyName.CharLimit = 0
+	newKeySecret := textinput.New()
+	newKeySecret.Prompt = ""
+	newKeySecret.Placeholder = "Paste Gemini API key"
+	newKeySecret.EchoMode = textinput.EchoPassword
+	newKeySecret.EchoCharacter = '*'
+	newKeySecret.CharLimit = 0
 	m := model{ctx: ctx, generate: options.Generate, text: text, fields: fields,
 		screen: "generate", loadUsage: options.LoadUsage,
 		loadConfig: options.LoadConfig, saveConfigFn: options.SaveConfig,
+		addKeyFn: options.AddKey, updateKeyFn: options.UpdateKey, removeKeyFn: options.RemoveKey,
 		cfgSnapshot: snapshot, cfgFields: newConfigFields(snapshot),
+		cfgNewKeyName: newKeyName, cfgNewKeyTier: core.KeyTierFree, cfgNewKeySecret: newKeySecret,
 		spinner: spin,
 		width:   80, height: 30,
 		status: "Ready · generation starts only when you ask."}
@@ -207,13 +233,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Error: " + msg.err.Error()
 			}
 		} else {
-			m.applyConfigSnapshot(msg.snapshot)
-			m.applySettingsToGenerate(msg.snapshot.Effective)
+			if !msg.keysOnly {
+				m.applyConfigSnapshot(msg.snapshot)
+				m.applySettingsToGenerate(msg.snapshot.Effective)
+			} else if msg.hasKeys {
+				m.applyProviderKeys(msg.keys)
+			}
 			m.cfgLoaded = true
 			m.cfgError = ""
 			if !m.busy {
-				m.status = "Saved configuration · " + safe(msg.snapshot.Path)
+				if !msg.keysOnly {
+					m.status = "Saved configuration · " + safe(msg.snapshot.Path)
+				} else {
+					m.status = "Saved provider keys."
+				}
 			}
+		}
+		return m, nil
+	case keysUpdatedMsg:
+		if msg.id != m.cfgKeyOpID {
+			return m, nil
+		}
+		m.cfgKeyBusy = false
+		if msg.err != nil {
+			m.cfgError = msg.err.Error()
+			if !m.busy {
+				m.status = "Error: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.applyProviderKeys(msg.keys)
+		m.cfgAddingKey = false
+		m.clearNewKeyInputs()
+		m.cfgError = ""
+		if !m.busy && msg.status != "" {
+			m.status = msg.status
+		}
+		if m.screen == "config" {
+			return m, m.setConfigFocus(m.cfgFocus)
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -257,6 +314,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 		}
 		return m, m.refreshUsage()
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case tea.KeyMsg:
 		if m.screen == "usage" {
 			switch msg.String() {
@@ -283,25 +342,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.busy {
 				m.cancel()
 				m.status = "Cancelling…"
+				return m, nil
+			}
+			if m.screen == "config" && m.cfgAddingKey {
+				return m, m.cancelAddKey()
 			}
 			return m, nil
 		case "f1":
-			m.screen = "generate"
-			m.blurConfigFields()
-			return m, m.setFocus(m.focus)
+			return m.switchScreen("generate")
 		case "f2":
-			m.screen = "usage"
-			m.blurGenerateFields()
-			m.blurConfigFields()
-			return m, m.refreshUsage()
+			return m.switchScreen("usage")
 		case "f3":
-			m.screen = "config"
-			m.blurGenerateFields()
-			focusCmd := m.setConfigFocus(m.cfgFocus)
-			if !m.cfgLoaded || !m.configDirty() {
-				return m, tea.Batch(focusCmd, m.refreshConfig())
-			}
-			return m, focusCmd
+			return m.switchScreen("config")
 		case "ctrl+r":
 			if m.screen == "config" {
 				return m, m.refreshConfig()
@@ -318,6 +370,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.unsetFocusedConfigField()
 			return m, nil
+		case "ctrl+d", "delete":
+			if m.screen == "config" {
+				if idx := m.cfgKeyIndex(); idx >= 0 {
+					return m.removeKey(idx)
+				}
+			}
 		case "ctrl+p":
 			if m.screen != "generate" {
 				return m, nil
@@ -361,13 +419,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.screen == "config" {
-				if m.cfgFocus == len(m.cfgFields) {
-					return m.saveConfig()
-				}
-				if m.cfgFocus == len(m.cfgFields)+1 {
-					return m, m.refreshConfig()
-				}
-				return m, nil
+				return m.handleConfigEnter()
 			}
 			if m.screen != "generate" {
 				return m, nil
@@ -394,8 +446,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfgFields[m.cfgFocus].input.Value() != prev {
 				m.cfgFields[m.cfgFocus].pendingUnset = false
 			}
+		} else if idx := m.cfgKeyIndex(); idx >= 0 && m.cfgKeys[idx].source == "file" {
+			m.cfgKeys[idx].nameInput, cmd = m.cfgKeys[idx].nameInput.Update(msg)
+		} else if m.cfgAddingKey {
+			switch m.cfgFocus {
+			case m.cfgAddFormStart():
+				m.cfgNewKeyName, cmd = m.cfgNewKeyName.Update(msg)
+			case m.cfgAddFormStart() + 2:
+				m.cfgNewKeySecret, cmd = m.cfgNewKeySecret.Update(msg)
+			}
 		}
-		if m.busy || m.cfgLoading || m.cfgSaving {
+		if m.busy || m.cfgLoading || m.cfgSaving || m.cfgKeyBusy {
 			var tick tea.Cmd
 			m.spinner, tick = m.spinner.Update(msg)
 			cmd = tea.Batch(cmd, tick)

@@ -283,3 +283,52 @@ func TestUsageWorkerJoinsAfterCancellation(t *testing.T) {
 		t.Fatal("cancelled loader result lost")
 	}
 }
+
+func TestWorkspaceSeparatesStatusAndFooter(t *testing.T) {
+	for _, tc := range []struct {
+		screen     string
+		status     string
+		unexpected []string
+	}{
+		{
+			screen:     "generate",
+			status:     "Ready to generate audio.",
+			unexpected: []string{"Preview makes no API call", "Ctrl+G generate", "Ctrl+P preview"},
+		},
+		{
+			screen:     "usage",
+			status:     "Local usage loaded.",
+			unexpected: []string{"F1 Generate", "F3 Config"},
+		},
+		{
+			screen:     "config",
+			status:     "Enter optional name, choose free/paid (←/→), and paste your Gemini API key.",
+			unexpected: []string{"unset field", "Ctrl+S save", "Ctrl+R reload"},
+		},
+	} {
+		t.Run(tc.screen, func(t *testing.T) {
+			m := newModel(context.Background(), Options{})
+			next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 28})
+			m = next.(model)
+			m.screen = tc.screen
+			m.status = tc.status
+
+			view := ansi.Strip(m.View())
+			lines := strings.Split(view, "\n")
+			if len(lines) != 28 {
+				t.Fatalf("expected bottom bar anchored to height 28, got %d lines", len(lines))
+			}
+			if !strings.Contains(lines[len(lines)-3], "────────") {
+				t.Errorf("expected divider above status, got %q", lines[len(lines)-3])
+			}
+			if !strings.HasPrefix(lines[len(lines)-2], "› "+tc.status) {
+				t.Errorf("expected prefixed status line, got %q", lines[len(lines)-2])
+			}
+			for _, bad := range tc.unexpected {
+				if strings.Contains(lines[len(lines)-1], bad) || strings.Contains(view, "unset field") || strings.Contains(view, "Preview makes no API call") {
+					t.Errorf("unexpected redundant hint %q in %s view", bad, tc.screen)
+				}
+			}
+		})
+	}
+}

@@ -26,6 +26,14 @@ func TestKeysAddListRemoveReset(t *testing.T) {
 		t.Fatalf("keys add paid failed (%d): %s", c, out)
 	}
 
+	c, out, _ = runTest(m, "keys", "update", "my-free", "--name", "renamed-key", "--tier", "paid", "--json")
+	if c != 0 {
+		t.Fatalf("keys update failed (%d): %s", c, out)
+	}
+	if !strings.Contains(out, `"name":"renamed-key"`) || !strings.Contains(out, `"tier":"paid"`) {
+		t.Fatalf("unexpected keys update output: %s", out)
+	}
+
 	c, out, _ = runTest(m, "keys", "list", "--json")
 	if c != 0 {
 		t.Fatalf("keys list failed (%d): %s", c, out)
@@ -40,7 +48,7 @@ func TestKeysAddListRemoveReset(t *testing.T) {
 		t.Fatalf("unexpected keys list output: %s", out)
 	}
 
-	c, out, _ = runTest(m, "keys", "remove", "my-free", "--json")
+	c, out, _ = runTest(m, "keys", "remove", "renamed-key", "--json")
 	if c != 0 {
 		t.Fatalf("keys remove failed (%d): %s", c, out)
 	}

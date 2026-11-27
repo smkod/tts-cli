@@ -40,6 +40,21 @@ func TestFreeToPaidFailoverAndCooldownPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// UpdateKey can rename and change tier without altering the key secret.
+	updated, err := UpdateKey(cfgDir, "free-1", "free-renamed", TierPaid)
+	if err != nil {
+		t.Fatalf("UpdateKey rename/tier failed: %v", err)
+	}
+	if updated.Name != "free-renamed" || updated.Tier != TierPaid || updated.Key != "AIza-free-key-1111" {
+		t.Fatalf("unexpected updated key: %+v", updated)
+	}
+	if _, err := UpdateKey(cfgDir, "free-renamed", "free-2", ""); err == nil {
+		t.Fatal("expected duplicate name error from UpdateKey")
+	}
+	if _, err := UpdateKey(cfgDir, "free-renamed", "free-1", TierFree); err != nil {
+		t.Fatalf("UpdateKey restore failed: %v", err)
+	}
+
 	var mu sync.Mutex
 	var calls []string
 	var gotModel string

@@ -97,15 +97,60 @@ func (a *app) tui() *cobra.Command {
 		if run == nil {
 			run = tui.Run
 		}
+		configDir := filepath.Dir(config.Path)
 		options := tui.Options{
 			Settings: settings, Generate: generate,
-			LoadUsage:  usageLoader(filepath.Dir(config.Path)),
+			LoadUsage:  usageLoader(configDir),
 			LoadConfig: loadConfig,
 			SaveConfig: saveConfig,
+			AddKey: func(ctx context.Context, name, tier, apiKey string) ([]tui.ProviderKey, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if _, err := geminitts.AddKey(configDir, name, tier, apiKey); err != nil {
+					return nil, err
+				}
+				return loadProviderKeys(configDir)
+			},
+			UpdateKey: func(ctx context.Context, targetName, newName, newTier string) ([]tui.ProviderKey, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if _, err := geminitts.UpdateKey(configDir, targetName, newName, newTier); err != nil {
+					return nil, err
+				}
+				return loadProviderKeys(configDir)
+			},
+			RemoveKey: func(ctx context.Context, targetName string) ([]tui.ProviderKey, error) {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if _, err := geminitts.RemoveKey(configDir, targetName); err != nil {
+					return nil, err
+				}
+				return loadProviderKeys(configDir)
+			},
 		}
 		return run(cmd.Context(), options, a.stdin, a.stdout)
 	}
 	return command("tui", "Open the interactive Generate terminal interface", nil, exactly(0), runCommand)
+}
+
+func loadProviderKeys(configDir string) ([]tui.ProviderKey, error) {
+	keys, err := geminitts.LoadKeys(configDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tui.ProviderKey, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, tui.ProviderKey{
+			Name:      k.Name,
+			Tier:      k.Tier,
+			MaskedKey: geminitts.MaskKey(k.Key),
+			Source:    k.Source,
+		})
+	}
+	return out, nil
 }
 
 func configSnapshot(c core.Config, s core.Settings, explicit bool) tui.ConfigSnapshot {
@@ -113,6 +158,7 @@ func configSnapshot(c core.Config, s core.Settings, explicit bool) tui.ConfigSna
 	if c.Stored != nil {
 		stored = maps.Clone(c.Stored)
 	}
+	keys, _ := loadProviderKeys(filepath.Dir(c.Path))
 	return tui.ConfigSnapshot{
 		Path:      c.Path,
 		Explicit:  explicit,
@@ -120,6 +166,7 @@ func configSnapshot(c core.Config, s core.Settings, explicit bool) tui.ConfigSna
 		Env:       c.EnvValues(),
 		Defaults:  c.DefaultValues(),
 		Effective: s,
+		Keys:      keys,
 	}
 }
 

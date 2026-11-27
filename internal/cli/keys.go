@@ -94,7 +94,22 @@ func (a *app) keys() *cobra.Command {
 		return nil
 	})
 
-	parent.AddCommand(add, list, remove, reset)
+	var updateName, updateTier string
+	update := command("update <name-or-index>", "Rename or change the tier of a saved Gemini API key", []string{"up"}, exactly(1), func(cmd *cobra.Command, args []string) error {
+		configDir, _ := a.keyDirs(cmd)
+		updated, err := geminitts.UpdateKey(configDir, args[0], updateName, updateTier)
+		if err != nil {
+			return err
+		}
+		masked := geminitts.MaskKey(updated.Key)
+		a.result = map[string]any{"name": updated.Name, "tier": updated.Tier, "masked_key": masked}
+		a.human = fmt.Sprintf("Updated Gemini %s key %s (%s).", updated.Tier, updated.Name, masked)
+		return nil
+	})
+	update.Flags().StringVar(&updateName, "name", "", "New label for this key")
+	update.Flags().StringVar(&updateTier, "tier", "", "New key tier (free or paid)")
+
+	parent.AddCommand(add, list, update, remove, reset)
 	return parent
 }
 

@@ -174,18 +174,7 @@ func RemoveKey(configDir, target string) (KeyEntry, error) {
 	if err != nil {
 		return KeyEntry{}, err
 	}
-	idx := -1
-	for i, k := range existing {
-		if strings.EqualFold(k.Name, target) {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		if n, err := strconv.Atoi(target); err == nil && n >= 1 && n <= len(existing) {
-			idx = n - 1
-		}
-	}
+	idx := findKeyIndex(existing, target)
 	if idx == -1 {
 		return KeyEntry{}, core.Fail("INVALID_INPUT", "Key not found.", false)
 	}
@@ -196,6 +185,63 @@ func RemoveKey(configDir, target string) (KeyEntry, error) {
 	}
 	removed.Source = "file"
 	return removed, nil
+}
+
+// UpdateKey renames and/or changes the free/paid tier of a saved Gemini API key.
+func UpdateKey(configDir, target, newName, newTier string) (KeyEntry, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return KeyEntry{}, core.Fail("INVALID_INPUT", "Specify a key name or index to update.", false)
+	}
+	newName = strings.TrimSpace(newName)
+	newTier = strings.ToLower(strings.TrimSpace(newTier))
+	if newName == "" && newTier == "" {
+		return KeyEntry{}, core.Fail("INVALID_INPUT", "Specify a new name or tier.", false)
+	}
+	if newTier != "" && newTier != TierFree && newTier != TierPaid {
+		return KeyEntry{}, core.Fail("INVALID_INPUT", "Key tier must be free or paid.", false)
+	}
+	path := KeysPath(configDir)
+	if path == "" {
+		return KeyEntry{}, core.Fail("FILE_IO", "Cannot determine the keys file path.", false)
+	}
+	existing, err := readKeysFile(path)
+	if err != nil {
+		return KeyEntry{}, err
+	}
+	idx := findKeyIndex(existing, target)
+	if idx == -1 {
+		return KeyEntry{}, core.Fail("INVALID_INPUT", "Key not found.", false)
+	}
+	if newName != "" {
+		for i, k := range existing {
+			if i != idx && strings.EqualFold(k.Name, newName) {
+				return KeyEntry{}, core.Fail("INVALID_INPUT", "A key with that name already exists.", false)
+			}
+		}
+		existing[idx].Name = newName
+	}
+	if newTier != "" {
+		existing[idx].Tier = newTier
+	}
+	if err := writePrivateJSON(path, storedKeysFile{Keys: existing}); err != nil {
+		return KeyEntry{}, err
+	}
+	updated := existing[idx]
+	updated.Source = "file"
+	return updated, nil
+}
+
+func findKeyIndex(existing []KeyEntry, target string) int {
+	for i, k := range existing {
+		if strings.EqualFold(k.Name, target) {
+			return i
+		}
+	}
+	if n, err := strconv.Atoi(target); err == nil && n >= 1 && n <= len(existing) {
+		return n - 1
+	}
+	return -1
 }
 
 func nextKeyName(existing []KeyEntry, tier string) string {

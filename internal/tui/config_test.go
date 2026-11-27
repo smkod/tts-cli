@@ -84,8 +84,8 @@ func TestConfigNavigationAndHiddenGenerateIsolation(t *testing.T) {
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = next.(model)
-	if m.cfgFocus != len(m.cfgFields)+1 {
-		t.Fatalf("wrap shift+tab focus = %d, want %d", m.cfgFocus, len(m.cfgFields)+1)
+	if m.cfgFocus != m.cfgReloadFocus() {
+		t.Fatalf("wrap shift+tab focus = %d, want %d", m.cfgFocus, m.cfgReloadFocus())
 	}
 
 	// Make a draft edit, switch to Generate and back: unsaved draft must survive F3.
@@ -287,7 +287,7 @@ func TestConfigSaveLoadStaleDropAndGenerateSync(t *testing.T) {
 	}
 
 	// Trigger save via Enter on Save button.
-	m.setConfigFocus(len(m.cfgFields))
+	m.setConfigFocus(m.cfgSaveFocus())
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = next.(model)
 	if !m.cfgSaving {
@@ -424,6 +424,143 @@ func TestConfigWorkerJoinsAfterCancellation(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected batch cmd from refreshConfig")
+	}
+}
+
+func TestConfigProviderKeysWorkflow(t *testing.T) {
+	type addReq struct {
+		name, tier, key string
+	}
+	type updateReq struct {
+		target, name, tier string
+	}
+	addCh := make(chan addReq, 1)
+	updateCh := make(chan updateReq, 1)
+	removeCh := make(chan string, 1)
+
+	m := newModel(context.Background(), Options{
+		AddKey: func(_ context.Context, name, tier, apiKey string) ([]ProviderKey, error) {
+			addCh <- addReq{name: name, tier: tier, key: apiKey}
+			return []ProviderKey{
+				{Name: "work-paid", Tier: core.KeyTierPaid, MaskedKey: "AIza...1111", Source: "file"},
+				{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+				{Name: name, Tier: tier, MaskedKey: "AIza...3333", Source: "file"},
+			}, nil
+		},
+		UpdateKey: func(_ context.Context, target, name, tier string) ([]ProviderKey, error) {
+			updateCh <- updateReq{target: target, name: name, tier: tier}
+			return []ProviderKey{
+				{Name: name, Tier: tier, MaskedKey: "AIza...1111", Source: "file"},
+				{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+			}, nil
+		},
+		RemoveKey: func(_ context.Context, target string) ([]ProviderKey, error) {
+			removeCh <- target
+			return []ProviderKey{
+				{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+			}, nil
+		},
+	})
+	m.screen = "config"
+	m.applyConfigSnapshot(ConfigSnapshot{
+		Path: "/tmp/config.yaml",
+		Keys: []ProviderKey{
+			{Name: "personal", Tier: core.KeyTierFree, MaskedKey: "AIza...1111", Source: "file"},
+			{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+		},
+	})
+
+	// Rename first key and toggle tier to paid, then save with Enter.
+	m.setConfigFocus(len(m.cfgFields))
+	m.cfgKeys[0].nameInput.SetValue("work-paid")
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	if m.cfgKeys[0].tier != core.KeyTierPaid || !m.configDirty() {
+		t.Fatalf("expected paid tier and dirty key: %+v", m.cfgKeys[0])
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if !m.cfgKeyBusy {
+		t.Fatal("Enter on dirty key did not start UpdateKey")
+	}
+	ureq := <-updateCh
+	if ureq.target != "personal" || ureq.name != "work-paid" || ureq.tier != core.KeyTierPaid {
+		t.Fatalf("unexpected update request: %+v", ureq)
+	}
+	next, _ = m.Update(keysUpdatedMsg{
+		id:     m.cfgKeyOpID,
+		status: "Updated key work-paid (paid).",
+		keys: []ProviderKey{
+			{Name: "work-paid", Tier: core.KeyTierPaid, MaskedKey: "AIza...1111", Source: "file"},
+			{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+		},
+	})
+	m = next.(model)
+	if m.cfgKeyBusy || m.configDirty() || m.cfgKeys[0].initialName != "work-paid" {
+		t.Fatalf("update completion failed: busy=%v dirty=%v key=%+v", m.cfgKeyBusy, m.configDirty(), m.cfgKeys[0])
+	}
+
+	// Env key is read-only.
+	m.setConfigFocus(len(m.cfgFields) + 1)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	if m.cfgKeys[1].tier != core.KeyTierFree || !strings.Contains(m.status, "read-only") {
+		t.Fatalf("env key should remain read-only: tier=%q status=%q", m.cfgKeys[1].tier, m.status)
+	}
+
+	// Open "+ Add Gemini key", fill fields, toggle paid, submit, and verify secret is cleared.
+	m.setConfigFocus(m.cfgAddButtonFocus())
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	if !m.cfgAddingKey {
+		t.Fatal("Enter on + Add Gemini key did not open form")
+	}
+	m.cfgNewKeyName.SetValue("backup")
+	m.setConfigFocus(m.cfgAddFormStart() + 1)
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = next.(model)
+	if m.cfgNewKeyTier != core.KeyTierPaid {
+		t.Fatalf("expected new key tier paid, got %q", m.cfgNewKeyTier)
+	}
+	m.cfgNewKeySecret.SetValue("AIza-new-secret-3333")
+	m.setConfigFocus(m.cfgAddSubmitFocus())
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	areq := <-addCh
+	if areq.name != "backup" || areq.tier != core.KeyTierPaid || areq.key != "AIza-new-secret-3333" {
+		t.Fatalf("unexpected add request: %+v", areq)
+	}
+	next, _ = m.Update(keysUpdatedMsg{
+		id:     m.cfgKeyOpID,
+		status: "Saved paid Gemini key.",
+		keys: []ProviderKey{
+			{Name: "work-paid", Tier: core.KeyTierPaid, MaskedKey: "AIza...1111", Source: "file"},
+			{Name: "env", Tier: core.KeyTierFree, MaskedKey: "AIza...2222", Source: "env"},
+			{Name: "backup", Tier: core.KeyTierPaid, MaskedKey: "AIza...3333", Source: "file"},
+		},
+	})
+	m = next.(model)
+	if m.cfgAddingKey || m.cfgNewKeySecret.Value() != "" || len(m.cfgKeys) != 3 {
+		t.Fatalf("add completion failed: adding=%v secret=%q count=%d", m.cfgAddingKey, m.cfgNewKeySecret.Value(), len(m.cfgKeys))
+	}
+
+	// Esc cancels add form.
+	m.setConfigFocus(m.cfgAddButtonFocus())
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = next.(model)
+	m.cfgNewKeySecret.SetValue("secret-to-clear")
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = next.(model)
+	if m.cfgAddingKey || m.cfgNewKeySecret.Value() != "" {
+		t.Fatal("Esc did not cancel add key form and clear secret")
+	}
+
+	// Ctrl+D removes focused file key.
+	m.setConfigFocus(len(m.cfgFields))
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = next.(model)
+	if got := <-removeCh; got != "work-paid" {
+		t.Fatalf("removed = %q, want work-paid", got)
 	}
 }
 
